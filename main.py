@@ -4,6 +4,7 @@ from threading import Thread
 from config import BOT_STATE, logger, BOT_START_TIME, TELEGRAM_BOT_TOKEN
 from telegram_bot import app
 from scheduler import run_scheduler
+from utils import init_proxy_pool  # <-- добавлен импорт
 
 def start_scheduler():
     scheduler_thread = Thread(target=run_scheduler)
@@ -12,6 +13,9 @@ def start_scheduler():
     logger.info("✅ Scheduler запущен в фоне")
 
 if __name__ == "__main__":
+    # Инициализация прокси из файла
+    init_proxy_pool()
+    
     # Устанавливаем вебхук
     token = TELEGRAM_BOT_TOKEN
     if token:

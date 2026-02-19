@@ -6,11 +6,14 @@ from flask import Flask, request
 
 from config import (
     BOT_STATE, state_lock, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID,
-    logger, ALL_PLATFORMS
+    logger, ALL_PLATFORMS, PROXY_POOL
 )
 from brands import BRAND_MAIN_NAMES, POPULAR_BRANDS, get_variations_for_platform
 from parsers import PARSERS
-from utils import generate_item_id
+from utils import (
+    generate_item_id, test_proxy, add_proxy_to_pool, 
+    check_and_update_proxies, get_proxy_stats
+)
 
 app = Flask(__name__)
 
@@ -89,6 +92,7 @@ def send_main_menu(chat_id=None):
             [{"text": "📋 Список брендов", "callback_data": "brands_list"}],
             [{"text": "⏱ Интервал", "callback_data": "interval"}],
             [{"text": "🔄 Выбрать бренды", "callback_data": "select_brands_menu"}],
+            [{"text": "🔧 Управление прокси", "callback_data": "proxy_menu"}],
             [{"text": "⏸ Пауза / ▶️ Продолжить", "callback_data": "toggle_pause"}]
         ]
     }
@@ -103,6 +107,7 @@ def send_main_menu(chat_id=None):
             f"Статус: {pause_status}\n"
             f"Площадки: {platforms}\n"
             f"{brands_info}\n"
+            f"Прокси в пуле: {len(PROXY_POOL)}\n"
             f"Проверок: {BOT_STATE['stats']['total_checks']}\n"
             f"Найдено: {BOT_STATE['stats']['total_finds']}\n"
             f"Последняя: {BOT_STATE['last_check'] or 'никогда'}"
@@ -205,7 +210,8 @@ def send_stats(chat_id=None):
             f"Турбо: {'Вкл' if BOT_STATE.get('turbo_mode') else 'Выкл'}\n"
             f"Статус: {'⏸ ПАУЗА' if BOT_STATE['paused'] else '▶️ АКТИВЕН'}\n"
             f"Выбрано брендов: {len(BOT_STATE['selected_brands'])} / вариаций: {var_count}\n"
-            f"Площадок: {len(BOT_STATE['selected_platforms'])}/{len(ALL_PLATFORMS)}\n\n"
+            f"Площадок: {len(BOT_STATE['selected_platforms'])}/{len(ALL_PLATFORMS)}\n"
+            f"Прокси в пуле: {len(PROXY_POOL)}\n\n"
             f"Последняя проверка: {BOT_STATE['last_check'] or 'никогда'}"
         )
     keyboard = {"inline_keyboard": [[{"text": "◀️ Назад", "callback_data": "main_menu"}]]}
@@ -224,6 +230,60 @@ def send_interval_menu(chat_id=None):
         ]
     }
     send_telegram_message(f"⏱ Текущий интервал: {current} мин", keyboard=keyboard, chat_id=chat_id)
+
+# ==================== Меню управления прокси ====================
+def send_proxy_menu(chat_id=None):
+    with state_lock:
+        proxy_count = len(PROXY_POOL)
+    keyboard = {
+        "inline_keyboard": [
+            [{"text": "➕ Добавить прокси", "callback_data": "proxy_add"}],
+            [{"text": "🔍 Проверить все", "callback_data": "proxy_check"}],
+            [{"text": "📊 Статистика", "callback_data": "proxy_stats"}],
+            [{"text": "🗑 Очистить нерабочие", "callback_data": "proxy_clean"}],
+            [{"text": "◀️ Назад", "callback_data": "main_menu"}]
+        ]
+    }
+    msg = f"🔧 Управление прокси\n\nВсего в пуле: {proxy_count}"
+    send_telegram_message(msg, keyboard=keyboard, chat_id=chat_id)
+
+# ==================== Фоновые задачи для прокси ====================
+def add_proxies_from_list(proxies, chat_id):
+    """Проверяет список прокси и добавляет рабочие в пул"""
+    working = []
+    total = len(proxies)
+    for i, proxy in enumerate(proxies, 1):
+        send_telegram_message(f"⏳ Проверка {i}/{total}: {proxy}", chat_id=chat_id)
+        proxy_url, ok, ip, speed = test_proxy(proxy)
+        if ok:
+            add_proxy_to_pool(proxy_url)
+            working.append(proxy_url)
+            send_telegram_message(f"✅ {proxy} работает (IP: {ip}, {speed}с)", chat_id=chat_id)
+        else:
+            send_telegram_message(f"❌ {proxy} не работает", chat_id=chat_id)
+    
+    if working:
+        msg = f"🎉 Добавлено {len(working)} рабочих прокси"
+    else:
+        msg = "❌ Ни одного рабочего прокси не найдено"
+    send_telegram_message(msg, chat_id=chat_id)
+    send_proxy_menu(chat_id)
+
+def check_all_proxies(chat_id):
+    """Проверяет все прокси в текущем пуле и удаляет нерабочие"""
+    send_telegram_message("🔄 Начинаю полную проверку пула прокси...", chat_id=chat_id)
+    working = check_and_update_proxies()
+    msg = f"✅ Проверка завершена. Рабочих прокси: {len(working)}"
+    send_telegram_message(msg, chat_id=chat_id)
+    send_proxy_menu(chat_id)
+
+def clean_proxies(chat_id):
+    """Удаляет нерабочие прокси"""
+    send_telegram_message("🧹 Очистка нерабочих прокси...", chat_id=chat_id)
+    working = check_and_update_proxies()
+    msg = f"✅ Осталось рабочих прокси: {len(working)}"
+    send_telegram_message(msg, chat_id=chat_id)
+    send_proxy_menu(chat_id)
 
 # ==================== Вебхуки и маршруты ====================
 
@@ -361,9 +421,58 @@ def handle_update(update):
                 else:
                     from scheduler import check_all_marketplaces
                     Thread(target=check_all_marketplaces).start()
+            
+            # Новые обработчики для прокси
+            elif data == 'proxy_menu':
+                send_proxy_menu(chat_id)
+            elif data == 'proxy_add':
+                send_telegram_message("📝 Отправьте список прокси (каждый с новой строки).\n"
+                                      "Формат: protocol://ip:port (например, http://123.45.67.89:8080 или socks5://...)", 
+                                      chat_id=chat_id)
+                with state_lock:
+                    BOT_STATE['awaiting_proxy'] = True
+            elif data == 'proxy_check':
+                send_telegram_message("🔄 Проверка прокси, это может занять некоторое время...", chat_id=chat_id)
+                Thread(target=check_all_proxies, args=(chat_id,)).start()
+            elif data == 'proxy_stats':
+                stats = get_proxy_stats()
+                msg = (f"📊 Статистика прокси:\n"
+                       f"Всего в пуле: {stats['total']}\n"
+                       f"Рабочих: {stats['good']}\n"
+                       f"Нерабочих: {stats['bad']}\n"
+                       f"Текущий индекс: {stats['current_index']}\n"
+                       f"Запросов на этом прокси: {stats['requests_this_proxy']}")
+                send_telegram_message(msg, chat_id=chat_id)
+                send_proxy_menu(chat_id)
+            elif data == 'proxy_clean':
+                send_telegram_message("🧹 Очистка нерабочих прокси...", chat_id=chat_id)
+                Thread(target=clean_proxies, args=(chat_id,)).start()
+                
         elif 'message' in update:
             chat_id = update['message']['chat']['id']
             text = update['message'].get('text', '')
+            
+            # Проверяем, не ожидаем ли мы ввод прокси
+            with state_lock:
+                awaiting = BOT_STATE.get('awaiting_proxy', False)
+            
+            if awaiting:
+                # Сбрасываем флаг
+                with state_lock:
+                    BOT_STATE['awaiting_proxy'] = False
+                
+                # Разбираем список прокси
+                lines = text.strip().split('\n')
+                proxies = [line.strip() for line in lines if line.strip()]
+                
+                if not proxies:
+                    send_telegram_message("❌ Список пуст. Попробуйте снова.", chat_id=chat_id)
+                else:
+                    send_telegram_message(f"🔍 Проверяю {len(proxies)} прокси...", chat_id=chat_id)
+                    Thread(target=add_proxies_from_list, args=(proxies, chat_id)).start()
+                return
+            
+            # Обработка обычных команд
             if text == '/start':
                 send_main_menu(chat_id)
             else:
