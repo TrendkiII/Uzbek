@@ -1,71 +1,50 @@
-from flask import Flask, request
+# main.py
+import os
+import logging
+from flask import Flask
 from threading import Thread
-from config import BOT_STATE, PORT, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, logger
+from scheduler import run_scheduler
 from telegram_bot import handle_telegram_update, send_telegram_message
-from scheduler import run_scheduler, check_all_marketplaces
+from config import BOT_STATE
 
+# ==================== Логирование ====================
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
+
+# ==================== Flask ====================
 app = Flask(__name__)
 
-# ================== Вебхук ==================
-@app.route('/', methods=['POST'])
-def webhook():
-    """
-    Основной вебхук Telegram.
-    Любое входящее обновление передаем в обработчик.
-    """
-    update = request.json
-    Thread(target=handle_telegram_update, args=(update,)).start()
-    return 'OK', 200
-
-@app.route('/', methods=['GET'])
+@app.route("/", methods=["GET"])
 def home():
-    """
-    Страница для проверки состояния бота.
-    """
-    uptime = int(time.time() - BOT_STATE.get("start_time", time.time()))
-    total_found = len(BOT_STATE.get("found_items", {}))
-    return f"Бот активен. Аптайм: {uptime} сек. Найдено: {total_found}"
+    with BOT_STATE['state_lock']:
+        uptime = int(os.time() - BOT_STATE['BOT_START_TIME'])
+        finds = BOT_STATE['stats']['total_finds']
+    return f"Бот активен. Аптайм: {uptime} сек. Найдено: {finds}"
 
-# ================== Фоновый планировщик ==================
-def start_scheduler():
-    """
-    Запуск планировщика в отдельном потоке.
-    """
-    scheduler_thread = Thread(target=run_scheduler)
-    scheduler_thread.daemon = True
-    scheduler_thread.start()
-    logger.info("Планировщик запущен")
+@app.route("/", methods=["POST"])
+def webhook():
+    data = None
+    try:
+        data = request.json
+    except Exception as e:
+        logger.error(f"Ошибка получения JSON: {e}")
+        return "Bad Request", 400
 
-# ================== Live-режим ==================
-def start_live_mode(chat_id=None):
-    """
-    Запуск live-режима: поиск выбранных брендов и площадок
-    и отправка найденных товаров в Telegram прямо в чат.
-    """
-    if not chat_id:
-        chat_id = TELEGRAM_CHAT_ID
-    Thread(target=check_all_marketplaces, kwargs={"live_mode": True}).start()
-    send_telegram_message("🚀 Live-поиск запущен", chat_id=chat_id)
+    if data:
+        # Обработка обновления в отдельном потоке
+        Thread(target=handle_telegram_update, args=(data,)).start()
+    return "OK", 200
 
-# ================== Запуск бота ==================
+# ==================== Фоновый Scheduler ====================
+scheduler_thread = Thread(target=run_scheduler)
+scheduler_thread.daemon = True
+scheduler_thread.start()
+
+# ==================== Запуск Flask ====================
 if __name__ == "__main__":
-    import time
-    BOT_STATE["start_time"] = time.time()
-    BOT_STATE["chat_id"] = TELEGRAM_CHAT_ID
-
-    # Установка вебхука для Telegram
-    if TELEGRAM_BOT_TOKEN:
-        webhook_url = BOT_STATE.get("webhook_url", "https://ваш-проект.railway.app")
-        try:
-            import requests
-            r = requests.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setWebhook?url={webhook_url}")
-            if r.status_code == 200:
-                logger.info(f"Вебхук установлен: {webhook_url}")
-        except Exception as e:
-            logger.error(f"Ошибка установки вебхука: {e}")
-
-    # Запуск планировщика
-    start_scheduler()
-
-    # Запуск Flask
-    app.run(host='0.0.0.0', port=PORT, threaded=True)
+    port = int(os.environ.get("PORT", 8080))
+    logger.info(f"🚀 Запуск Flask на 0.0.0.0:{port}")
+    app.run(host="0.0.0.0", port=port)

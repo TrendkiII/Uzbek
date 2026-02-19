@@ -3,8 +3,8 @@ import time
 from fake_useragent import UserAgent
 
 # ================== Telegram ==================
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8146716058:AAEUOcF2y0GPl4Le9LOkqtCUERhHzTsCbsc")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "945746201")
 
 # ================== Парсинг ==================
 REQUEST_TIMEOUT = 20          # Таймаут для HTTP запросов (сек)

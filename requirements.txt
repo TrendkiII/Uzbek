@@ -2,3 +2,6 @@ flask
 requests
 beautifulsoup4
 lxml
+aiogram
+fake-useragent
+python-dotenv
