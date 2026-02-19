@@ -1,0 +1,7 @@
+requests
+beautifulsoup4
+lxml
+fake-useragent
+Flask
+schedule
+python-telegram-bot
