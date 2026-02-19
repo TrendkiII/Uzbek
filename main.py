@@ -29,13 +29,16 @@ logger = logging.getLogger(__name__)
 # ==================== КОНФИГУРАЦИЯ ====================
 FOUND_ITEMS_FILE = "found_items.json"
 CHECK_INTERVAL_MINUTES = 30
-REQUEST_TIMEOUT = 15
-MAX_RETRIES = 3
-RETRY_DELAY = 5
+REQUEST_TIMEOUT = 30  # Увеличил таймаут
+MAX_RETRIES = 5       # Увеличил количество попыток
+RETRY_DELAY = 10      # Увеличил задержку между попытками
 
-# Кеширование User-Agent (генерируем несколько заранее)
+# Время старта бота для защиты от ранних проверок
+BOT_START_TIME = time.time()
+
+# Кеширование User-Agent
 ua = UserAgent()
-USER_AGENTS = [ua.random for _ in range(10)]
+USER_AGENTS = [ua.random for _ in range(20)]  # Увеличил количество UA
 UA_INDEX = 0
 
 PROXY = os.environ.get('PROXY_URL', None)
@@ -44,11 +47,8 @@ PROXY = os.environ.get('PROXY_URL', None)
 file_lock = Lock()
 state_lock = Lock()
 
-# ==================== РАСШИРЕННЫЙ СПИСОК БРЕНДОВ (УНИКАЛЬНЫЕ ВАРИАЦИИ) ====================
-# Каждая группа: "main" – основное название, "variations" – все возможные варианты написания,
-# включая опечатки, транслитерации, сленг, винтажные маркеры (без конкретных годов).
+# ==================== РАСШИРЕННЫЙ СПИСОК БРЕНДОВ ====================
 BRAND_GROUPS = [
-    # L.G.B. / Le grand bleu
     {
         "main": "L.G.B.",
         "variations": [
@@ -57,10 +57,9 @@ BRAND_GROUPS = [
             "ルグランブルー", "ル・グラン・ブルー", "エルジービー",
             "大蓝", "勒格朗蓝", "勒格朗布尔",
             "Le grand blue", "Legrandblue", "Le grande bleue",
-            "LGB vintage", "Le grand bleu vintage", "ルグランブルー ヴィンテージ"
+            "LGB vintage", "Le grand bleu vintage"
         ]
     },
-    # if six was nine
     {
         "main": "if six was nine",
         "variations": [
@@ -73,7 +72,6 @@ BRAND_GROUPS = [
             "if six was nine vintage", "ifsixwasnine archive"
         ]
     },
-    # kmrii / kemuri
     {
         "main": "kmrii",
         "variations": [
@@ -83,7 +81,6 @@ BRAND_GROUPS = [
             "kemuri vintage", "kmrii vintage", "km rii vintage", "km-rii vintage"
         ]
     },
-    # 14th addiction
     {
         "main": "14th addiction",
         "variations": [
@@ -96,7 +93,6 @@ BRAND_GROUPS = [
             "14th addiction vintage", "14th addict vintage", "14th archive"
         ]
     },
-    # share spirit
     {
         "main": "share spirit",
         "variations": [
@@ -107,7 +103,6 @@ BRAND_GROUPS = [
             "分享精神", "共享精神", "谢尔斯皮里特"
         ]
     },
-    # gunda
     {
         "main": "gunda",
         "variations": [
@@ -115,7 +110,6 @@ BRAND_GROUPS = [
             "グンダ", "贡达", "古恩达", "gunda archive"
         ]
     },
-    # yasuyuki ishii
     {
         "main": "yasuyuki ishii",
         "variations": [
@@ -125,7 +119,6 @@ BRAND_GROUPS = [
             "yasuyuki ishii vintage"
         ]
     },
-    # gongen
     {
         "main": "gongen",
         "variations": [
@@ -133,17 +126,14 @@ BRAND_GROUPS = [
             "権現", "权现", "gongen archive"
         ]
     },
-    # blaze
     {
         "main": "blaze",
         "variations": [
-            "blaze", "blaze 1999", "blaze-1999",
-            "blaz", "blase", "Blaze",
+            "blaze", "blaz", "blase", "Blaze",
             "ブレイズ", "火焰", "布雷兹",
             "blaze vintage", "blaze archive"
         ]
     },
-    # shohei takamiya
     {
         "main": "shohei takamiya",
         "variations": [
@@ -153,7 +143,6 @@ BRAND_GROUPS = [
             "shohei takamiya vintage"
         ]
     },
-    # wild heart
     {
         "main": "wild heart",
         "variations": [
@@ -163,7 +152,6 @@ BRAND_GROUPS = [
             "wild heart vintage", "wildheart vintage"
         ]
     },
-    # john moore
     {
         "main": "john moore",
         "variations": [
@@ -173,7 +161,6 @@ BRAND_GROUPS = [
             "john moore vintage", "john moore archive"
         ]
     },
-    # ian reid / ian reed
     {
         "main": "ian reid",
         "variations": [
@@ -183,7 +170,6 @@ BRAND_GROUPS = [
             "ian reid vintage", "ian reed vintage"
         ]
     },
-    # House of Beauty and Culture (с добавлением "The")
     {
         "main": "House of Beauty and Culture",
         "variations": [
@@ -195,7 +181,6 @@ BRAND_GROUPS = [
             "HBC vintage", "hobac vintage"
         ]
     },
-    # Koji Kuga
     {
         "main": "Koji Kuga",
         "variations": [
@@ -204,7 +189,6 @@ BRAND_GROUPS = [
             "koji kuga vintage"
         ]
     },
-    # beauty:beast
     {
         "main": "beauty:beast",
         "variations": [
@@ -215,7 +199,6 @@ BRAND_GROUPS = [
             "beauty beast vintage"
         ]
     },
-    # The old curiosity shop / Daita Kimura
     {
         "main": "The old curiosity shop",
         "variations": [
@@ -228,7 +211,6 @@ BRAND_GROUPS = [
             "OCS", "TOCS"
         ]
     },
-    # Swear / Swear London
     {
         "main": "Swear",
         "variations": [
@@ -239,7 +221,6 @@ BRAND_GROUPS = [
             "swear vintage", "swear london vintage"
         ]
     },
-    # fotus
     {
         "main": "fotus",
         "variations": [
@@ -249,7 +230,6 @@ BRAND_GROUPS = [
             "fotus vintage", "foetus vintage"
         ]
     },
-    # Saint Tropez
     {
         "main": "Saint Tropez",
         "variations": [
@@ -259,7 +239,6 @@ BRAND_GROUPS = [
             "saint tropez vintage"
         ]
     },
-    # Barcord / Barcode
     {
         "main": "Barcord",
         "variations": [
@@ -268,7 +247,6 @@ BRAND_GROUPS = [
             "barcord vintage", "barcode vintage"
         ]
     },
-    # paison&drug / python&drug
     {
         "main": "paison&drug",
         "variations": [
@@ -279,7 +257,6 @@ BRAND_GROUPS = [
             "paison drug vintage"
         ]
     },
-    # Prego
     {
         "main": "Prego",
         "variations": [
@@ -291,18 +268,16 @@ BRAND_GROUPS = [
     }
 ]
 
-# ==================== ПЛОСКИЕ СПИСКИ ДЛЯ РАБОТЫ ====================
+# ==================== ПЛОСКИЕ СПИСКИ ====================
 ALL_BRAND_VARIATIONS = []
 BRAND_MAIN_NAMES = []
 
 for group in BRAND_GROUPS:
     BRAND_MAIN_NAMES.append(group["main"])
-    # Добавляем только уникальные вариации (без дубликатов)
     for var in group["variations"]:
         if var not in ALL_BRAND_VARIATIONS:
             ALL_BRAND_VARIATIONS.append(var)
 
-# Популярные бренды (первые 10 основных для быстрого выбора)
 POPULAR_BRANDS = BRAND_MAIN_NAMES[:10]
 
 # ==================== СОСТОЯНИЕ БОТА ====================
@@ -350,7 +325,6 @@ def expand_selected_brands():
     return list(dict.fromkeys(variations))
 
 def get_next_user_agent():
-    """Ротация User-Agent для уменьшения вероятности бана"""
     global UA_INDEX
     ua = USER_AGENTS[UA_INDEX % len(USER_AGENTS)]
     UA_INDEX += 1
@@ -360,20 +334,12 @@ def get_next_user_agent():
 def send_telegram_message(text, photo_url=None, keyboard=None):
     token = os.environ.get('TELEGRAM_BOT_TOKEN')
     chat_id = os.environ.get('TELEGRAM_CHAT_ID')
-    
-    # Для команд и меню chat_id не обязателен, но для уведомлений нужен
-    # Проверяем только token, так как команды работают через webhook
+
     if not token:
         logger.error("Ошибка: нет TELEGRAM_BOT_TOKEN в Secrets")
         return False
-    
-    # Если нет chat_id, используем ID из webhook (для ответов на команды)
-    if not chat_id and 'chat' in locals():
-        # Эта часть будет заполняться при вызове из обработчика
-        pass
-    
+
     try:
-        # Если есть фото, отправляем как фото с подписью
         if photo_url and chat_id:
             url = f"https://api.telegram.org/bot{token}/sendPhoto"
             payload = {
@@ -397,7 +363,6 @@ def send_telegram_message(text, photo_url=None, keyboard=None):
                 payload['reply_markup'] = json.dumps(keyboard)
             requests.post(url, data=payload, timeout=10)
         else:
-            # Если нет chat_id, просто логируем (для отладки)
             logger.info(f"Сообщение (не отправлено, нет chat_id): {text[:50]}...")
         return True
     except Exception as e:
@@ -417,10 +382,7 @@ def send_main_menu(chat_id=None):
             [{"text": "⏸ Пауза / ▶️ Продолжить", "callback_data": "toggle_pause"}]
         ]
     }
-    
-    # Если передан chat_id, используем его, иначе берем из bot_state (для обратной совместимости)
-    target_chat_id = chat_id if chat_id else os.environ.get('TELEGRAM_CHAT_ID')
-    
+
     if bot_state['selected_brands']:
         info = f"Выбрано: {len(bot_state['selected_brands'])} брендов"
     else:
@@ -504,8 +466,9 @@ def handle_telegram_update(update):
             data = q['data']
             chat_id = q['from']['id']
             token = os.environ.get('TELEGRAM_BOT_TOKEN')
-            requests.post(f"https://api.telegram.org/bot{token}/answerCallbackQuery",
-                          json={'callback_query_id': q['id']})
+            if token:
+                requests.post(f"https://api.telegram.org/bot{token}/answerCallbackQuery",
+                              json={'callback_query_id': q['id']})
 
             if data == 'main_menu':
                 send_main_menu(chat_id)
@@ -514,7 +477,7 @@ def handle_telegram_update(update):
             elif data == 'mode_auto':
                 with state_lock:
                     bot_state['mode'] = 'auto'
-                send_telegram_message("✅ Режим: автоматический (все вариации)")
+                send_telegram_message("✅ Режим: автоматический")
                 send_main_menu(chat_id)
             elif data == 'mode_manual':
                 with state_lock:
@@ -583,17 +546,17 @@ def handle_telegram_update(update):
                     if brand in bot_state['selected_brands']:
                         bot_state['selected_brands'].remove(brand)
                         cnt = len(get_brand_variations(brand))
-                        send_telegram_message(f"❌ {brand} убран (было {cnt} вариаций)")
+                        send_telegram_message(f"❌ {brand} убран")
                     else:
                         bot_state['selected_brands'].append(brand)
                         cnt = len(get_brand_variations(brand))
-                        send_telegram_message(f"✅ {brand} добавлен ({cnt} вариаций)")
+                        send_telegram_message(f"✅ {brand} добавлен")
                 send_brands_list(0, chat_id)
             elif data == 'select_popular':
                 with state_lock:
                     bot_state['selected_brands'] = POPULAR_BRANDS.copy()
                     var = len(expand_selected_brands())
-                send_telegram_message(f"✅ {len(POPULAR_BRANDS)} популярных брендов, {var} вариаций")
+                send_telegram_message(f"✅ {len(POPULAR_BRANDS)} популярных брендов")
                 send_select_brands_menu(chat_id)
             elif data == 'random_5':
                 if len(BRAND_MAIN_NAMES) < 5:
@@ -604,7 +567,7 @@ def handle_telegram_update(update):
                     with state_lock:
                         bot_state['selected_brands'] = rnd
                         var = len(expand_selected_brands())
-                    send_telegram_message(f"✅ 5 случайных брендов, {var} вариаций")
+                    send_telegram_message(f"✅ 5 случайных брендов")
                     send_select_brands_menu(chat_id)
             elif data == 'random_10':
                 if len(BRAND_MAIN_NAMES) < 10:
@@ -615,12 +578,12 @@ def handle_telegram_update(update):
                     with state_lock:
                         bot_state['selected_brands'] = rnd
                         var = len(expand_selected_brands())
-                    send_telegram_message(f"✅ 10 случайных брендов, {var} вариаций")
+                    send_telegram_message(f"✅ 10 случайных брендов")
                     send_select_brands_menu(chat_id)
             elif data == 'clear_all':
                 with state_lock:
                     bot_state['selected_brands'] = []
-                send_telegram_message("🗑 Список брендов очищен")
+                send_telegram_message("🗑 Список очищен")
                 send_select_brands_menu(chat_id)
             elif data == 'noop':
                 pass
@@ -630,45 +593,12 @@ def handle_telegram_update(update):
             if text == '/start':
                 send_main_menu(chat_id)
             elif text.startswith('/'):
-                send_telegram_message("❌ Неизвестная команда. Используйте /start")
-            else:
-                # Поиск бренда по тексту
-                found = None
-                search_text = text.lower().strip()
-                for group in BRAND_GROUPS:
-                    if search_text == group["main"].lower() or any(search_text == v.lower() for v in group["variations"]):
-                        found = group["main"]
-                        break
-                if found:
-                    with state_lock:
-                        if found not in bot_state['selected_brands']:
-                            bot_state['selected_brands'].append(found)
-                            cnt = len(get_brand_variations(found))
-                            send_telegram_message(f"✅ {found} добавлен ({cnt} вариаций)")
-                        else:
-                            send_telegram_message(f"⚠️ {found} уже в списке")
-                else:
-                    # Частичный поиск (если точного совпадения нет)
-                    suggestions = []
-                    for group in BRAND_GROUPS:
-                        if search_text in group["main"].lower():
-                            suggestions.append(group["main"])
-                        else:
-                            for var in group["variations"]:
-                                if search_text in var.lower() and group["main"] not in suggestions:
-                                    suggestions.append(group["main"])
-                                    break
-                    if suggestions:
-                        msg = "Возможно, вы искали:\n" + "\n".join(f"• {s}" for s in suggestions[:5])
-                        send_telegram_message(msg)
-                    else:
-                        send_telegram_message("❌ Бренд не найден")
+                send_telegram_message("❌ Неизвестная команда")
     except Exception as e:
-        logger.error(f"Ошибка в обработчике Telegram: {e}")
+        logger.error(f"Ошибка в обработчике: {e}")
 
 # ==================== ПАРСИНГ ====================
 def safe_select(element, selectors):
-    """Пытается найти элемент по нескольким селекторам"""
     for selector in selectors:
         elem = element.select_one(selector)
         if elem:
@@ -679,15 +609,26 @@ def make_request(url, headers=None, timeout=REQUEST_TIMEOUT, retries=MAX_RETRIES
     if headers is None:
         headers = {'User-Agent': get_next_user_agent()}
     proxies = {'http': PROXY, 'https': PROXY} if PROXY else None
+
     for attempt in range(retries):
         try:
             r = requests.get(url, headers=headers, timeout=timeout, proxies=proxies)
             r.raise_for_status()
             return r
+        except requests.exceptions.Timeout:
+            logger.warning(f"Таймаут {attempt+1}/{retries} для {url}")
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 403:
+                logger.warning(f"Блокировка 403 для {url} - используем другой User-Agent")
+                headers = {'User-Agent': get_next_user_agent()}
+            else:
+                logger.warning(f"HTTP ошибка {attempt+1}/{retries} для {url}: {e}")
         except Exception as e:
-            logger.warning(f"Попытка {attempt+1}/{retries} для {url}: {e}")
-            if attempt < retries - 1:
-                time.sleep(RETRY_DELAY * (attempt + 1))
+            logger.warning(f"Ошибка {attempt+1}/{retries} для {url}: {e}")
+
+        if attempt < retries - 1:
+            time.sleep(RETRY_DELAY * (attempt + 1))
+
     return None
 
 def parse_ebay(brand):
@@ -696,12 +637,13 @@ def parse_ebay(brand):
     resp = make_request(url)
     if not resp:
         return []
+
     soup = BeautifulSoup(resp.text, 'lxml')
-    cards = soup.select('li.s-item')[:15]  # берем до 15 товаров
+    cards = soup.select('li.s-item')[:10]
+
     for card in cards:
         try:
-            # Пытаемся найти заголовок разными селекторами
-            title_elem = safe_select(card, ['.s-item__title', '.s-item__title span', 'h3.s-item__title'])
+            title_elem = safe_select(card, ['.s-item__title', '.s-item__title span'])
             if not title_elem or 'Shop on' in title_elem.text:
                 continue
 
@@ -723,8 +665,8 @@ def parse_ebay(brand):
                 'source': 'eBay'
             })
         except Exception as e:
-            logger.error(f"Ошибка парсинга eBay для {brand}: {e}")
             continue
+
     return items
 
 def parse_mercari(brand):
@@ -733,13 +675,14 @@ def parse_mercari(brand):
     resp = make_request(url)
     if not resp:
         return []
+
     soup = BeautifulSoup(resp.text, 'lxml')
-    # Mercari может использовать разные селекторы
-    cards = soup.select('[data-testid="item-cell"], .item-card, .ItemCard')[:10]
+    cards = soup.select('[data-testid="item-cell"]')[:10]
+
     for card in cards:
         try:
-            title_elem = safe_select(card, ['[data-testid="thumbnail-title"]', '.item-title', '.ItemCard__title'])
-            price_elem = safe_select(card, ['[data-testid="price"]', '.item-price', '.ItemCard__price'])
+            title_elem = safe_select(card, ['[data-testid="thumbnail-title"]'])
+            price_elem = safe_select(card, ['[data-testid="price"]'])
             link_elem = card.select_one('a')
             if not link_elem:
                 continue
@@ -763,8 +706,8 @@ def parse_mercari(brand):
                 'source': 'Mercari JP'
             })
         except Exception as e:
-            logger.error(f"Ошибка парсинга Mercari для {brand}: {e}")
             continue
+
     return items
 
 def parse_2ndstreet(brand):
@@ -773,12 +716,14 @@ def parse_2ndstreet(brand):
     resp = make_request(url)
     if not resp:
         return []
+
     soup = BeautifulSoup(resp.text, 'lxml')
-    cards = soup.select('.product-list-item, .product-item, .ProductItem')[:10]
+    cards = soup.select('.product-list-item')[:10]
+
     for card in cards:
         try:
-            title_elem = safe_select(card, ['.product-name a', '.product-name', '.ProductItem__title'])
-            price_elem = safe_select(card, ['.product-price', '.price', '.ProductItem__price'])
+            title_elem = safe_select(card, ['.product-name a'])
+            price_elem = safe_select(card, ['.product-price'])
             link_elem = card.select_one('a')
             if not link_elem:
                 continue
@@ -802,8 +747,8 @@ def parse_2ndstreet(brand):
                 'source': '2nd Street'
             })
         except Exception as e:
-            logger.error(f"Ошибка парсинга 2nd Street для {brand}: {e}")
             continue
+
     return items
 
 parsers = {
@@ -822,11 +767,10 @@ def check_brands(brands_list):
     for idx, brand in enumerate(brands_list, 1):
         with state_lock:
             if bot_state['paused'] or bot_state['shutdown']:
-                logger.info("Проверка приостановлена или завершается")
+                logger.info("Проверка остановлена")
                 break
 
-        # Пауза между разными вариациями
-        time.sleep(random.uniform(3, 7))
+        time.sleep(random.uniform(5, 10))
         logger.info(f"[{idx}/{total}] Поиск: {brand}")
 
         for site_name, parser_func in parsers.items():
@@ -834,8 +778,7 @@ def check_brands(brands_list):
                 if bot_state['paused'] or bot_state['shutdown']:
                     break
 
-            # Пауза между разными сайтами
-            time.sleep(random.uniform(2, 4))
+            time.sleep(random.uniform(3, 6))
             logger.info(f"  {site_name}...")
 
             try:
@@ -847,71 +790,64 @@ def check_brands(brands_list):
                     if item_id not in found:
                         found[item_id] = item
                         new += 1
-
-                        # Отправляем уведомление
                         msg = (f"🆕 <b>{item['title'][:50]}</b>\n"
                                f"💰 {item['price']}\n"
                                f"🏷 {item['source']}\n"
                                f"🔗 <a href='{item['url']}'>Ссылка</a>")
                         send_telegram_message(msg, item.get('img_url'))
-
-                        # Небольшая пауза между отправками
-                        time.sleep(0.5)
-
+                        time.sleep(1)
             except Exception as e:
-                logger.error(f"Ошибка при парсинге {site_name} для {brand}: {e}")
+                logger.error(f"Ошибка парсинга {site_name}: {e}")
 
-    # Обновляем статистику
     with state_lock:
         bot_state['stats']['total_checks'] += total
         bot_state['stats']['total_finds'] += new
         bot_state['last_check'] = time.strftime('%Y-%m-%d %H:%M:%S')
         bot_state['is_checking'] = False
 
-    # Сохраняем найденное
     if new > 0:
         save_found_items(found)
 
     elapsed = time.time() - start
-    msg = f"✅ Проверка завершена! Найдено новых товаров: {new}, время: {elapsed:.1f}с"
+    msg = f"✅ Проверка завершена! Найдено: {new}, время: {elapsed:.1f}с"
     send_telegram_message(msg)
     logger.info(msg)
 
 def check_all_marketplaces():
+    # Защита от запуска в первые 30 секунд после старта бота
+    if time.time() - BOT_START_TIME < 30:
+        logger.info("Бот в прогрузке, проверка отложена")
+        return
+
     with state_lock:
         if bot_state['is_checking']:
-            send_telegram_message("⚠️ Проверка уже выполняется")
+            send_telegram_message("⚠️ Уже выполняется")
             return
 
         if bot_state['paused']:
-            send_telegram_message("⚠️ Бот на паузе. Снимите паузу для запуска")
+            send_telegram_message("⚠️ Бот на паузе")
             return
 
         bot_state['is_checking'] = True
 
         if bot_state['mode'] == 'auto':
-            # В авторежиме проверяем все вариации (но ограничим, чтобы не было слишком много)
-            # Берем только уникальные вариации, но не больше 50 за раз
             all_vars = ALL_BRAND_VARIATIONS.copy()
-            if len(all_vars) > 50:
-                # Перемешиваем и берем 50 случайных
+            if len(all_vars) > 30:
                 import random
                 random.shuffle(all_vars)
-                brands_to_check = all_vars[:50]
-                logger.info(f"Авторежим: выбрано 50 случайных вариаций из {len(all_vars)}")
+                brands_to_check = all_vars[:30]
+                logger.info(f"Авто: выбрано 30 вариаций из {len(all_vars)}")
             else:
                 brands_to_check = all_vars
-            send_telegram_message(f"🚀 Автоматический режим: {len(brands_to_check)} вариаций")
+            send_telegram_message(f"🚀 Авто: {len(brands_to_check)} вариаций")
         else:
-            # Ручной режим
             if not bot_state['selected_brands']:
                 send_telegram_message("❌ Нет выбранных брендов")
                 bot_state['is_checking'] = False
                 return
             brands_to_check = expand_selected_brands()
-            send_telegram_message(f"🚀 Ручной режим: {len(bot_state['selected_brands'])} брендов -> {len(brands_to_check)} вариаций")
+            send_telegram_message(f"🚀 Ручной: {len(brands_to_check)} вариаций")
 
-    # Запускаем проверку в отдельном потоке
     Thread(target=check_brands, args=(brands_to_check,)).start()
 
 # ==================== ВЕБХУК ====================
@@ -928,10 +864,12 @@ def webhook():
 def home():
     with state_lock:
         status = "⏸ ПАУЗА" if bot_state['paused'] else "▶️ АКТИВЕН"
+        uptime = int(time.time() - BOT_START_TIME)
         return f"""
         <h1>Бот активен</h1>
         <p>Режим: {bot_state['mode']}</p>
         <p>Статус: {status}</p>
+        <p>Аптайм: {uptime} сек</p>
         <p>Выбрано брендов: {len(bot_state['selected_brands'])}</p>
         <p>Последняя проверка: {bot_state['last_check'] or 'никогда'}</p>
         <p>Найдено товаров: {bot_state['stats']['total_finds']}</p>
@@ -941,12 +879,11 @@ def home():
 @app.route('/status')
 def status():
     with state_lock:
-        var_count = len(expand_selected_brands()) if bot_state['selected_brands'] else 0
         return {
+            'uptime': int(time.time() - BOT_START_TIME),
             'mode': bot_state['mode'],
             'paused': bot_state['paused'],
             'selected_brands': len(bot_state['selected_brands']),
-            'selected_variations': var_count,
             'last_check': bot_state['last_check'],
             'total_checks': bot_state['stats']['total_checks'],
             'total_finds': bot_state['stats']['total_finds']
@@ -954,52 +891,38 @@ def status():
 
 # ==================== ПЛАНИРОВЩИК ====================
 def run_scheduler():
-    """Запускает планировщик с динамическим интервалом"""
     logger.info("Планировщик запущен")
-    last_run = time.time()  # Считаем, что последний запуск был сейчас
-    first_run = True
+    last_run = 0
+    first_check = True
 
     while not bot_state.get('shutdown', False):
         with state_lock:
-            interval = bot_state['interval'] * 60  # переводим в секунды
+            interval = bot_state['interval'] * 60
             paused = bot_state['paused']
 
         current_time = time.time()
 
-        # Если не на паузе и прошло достаточно времени
-        if not paused and (current_time - last_run) >= interval:
-            if first_run:
-                first_run = False
-                logger.info("Первый запуск — пропускаем автоматическую проверку")
-                last_run = current_time
-                continue
-                
-            logger.info(f"Планировщик: запуск проверки (интервал {interval//60} мин)")
+        if not paused and not first_check and (current_time - last_run) >= interval:
+            logger.info(f"Планировщик: запуск проверки")
             Thread(target=check_all_marketplaces).start()
             last_run = current_time
+        elif first_check:
+            first_check = False
+            logger.info("Первый запуск — пропускаем автоматическую проверку")
+            last_run = current_time
 
-        # Проверяем каждые 30 секунд
         time.sleep(30)
 
 # ==================== ЗАПУСК ====================
 if __name__ == "__main__":
     logger.info("🚀 Запуск бота...")
 
-    # Загружаем найденные товары для проверки
     found = load_found_items()
     logger.info(f"Загружено {len(found)} ранее найденных товаров")
 
-    # Настраиваем Telegram вебхук
     token = os.environ.get('TELEGRAM_BOT_TOKEN')
     if token:
-        # Определяем URL для вебхука
-        slug = os.environ.get('REPL_SLUG')
-        if slug:
-            webhook_url = f"https://{slug}.replit.app"
-        else:
-            # Для Render используем переменную окружения или стандартный URL
-            webhook_url = os.environ.get('WEBHOOK_URL', "https://marketplace-bot.onrender.com")
-
+        webhook_url = os.environ.get('WEBHOOK_URL', "https://marketplace-bot.onrender.com")
         try:
             response = requests.get(f"https://api.telegram.org/bot{token}/setWebhook?url={webhook_url}")
             if response.status_code == 200:
@@ -1007,17 +930,15 @@ if __name__ == "__main__":
             else:
                 logger.error(f"❌ Ошибка установки вебхука: {response.text}")
         except Exception as e:
-            logger.error(f"❌ Ошибка при установке вебхука: {e}")
+            logger.error(f"❌ Ошибка вебхука: {e}")
 
-        # Отправляем сообщение о запуске
-        send_telegram_message("🤖 Бот запущен! Используйте /start для управления")
-
-    # Запускаем планировщик в отдельном потоке
     scheduler_thread = Thread(target=run_scheduler)
     scheduler_thread.daemon = True
     scheduler_thread.start()
 
-    # Запускаем Flask приложение
+    time.sleep(2)
+
     port = int(os.environ.get('PORT', 8080))
     logger.info(f"Запуск Flask на порту {port}")
     app.run(host='0.0.0.0', port=port)
+    
