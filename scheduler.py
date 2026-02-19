@@ -12,12 +12,10 @@ def process_new_items(items, platform):
     """Обрабатывает список товаров, сохраняет новые и возвращает их"""
     new_items = []
     for item in items:
-        # Добавляем ID, если его нет
         if 'id' not in item:
             item['id'] = generate_item_id(item)
         if add_item(item):
             new_items.append(item)
-            # Обновляем статистику
             with state_lock:
                 if platform in BOT_STATE['stats']['platform_stats']:
                     BOT_STATE['stats']['platform_stats'][platform]['finds'] += 1
@@ -29,7 +27,10 @@ def check_platform(platform, variations, chat_id=None):
     if not parser:
         logger.warning(f"Нет парсера для {platform}")
         return []
+    
     platform_new_items = []
+    turbo = BOT_STATE.get('turbo_mode', False)
+    
     for var in variations:
         logger.info(f"[{platform}] Поиск: {var}")
         items = parser(var)
@@ -37,8 +38,13 @@ def check_platform(platform, variations, chat_id=None):
             new = process_new_items(items, platform)
             platform_new_items.extend(new)
             logger.info(f"[{platform}] Найдено {len(items)} товаров, новых {len(new)}")
-        # Небольшая задержка между запросами
-        time.sleep(random.uniform(1, 2))
+        
+        # В турбо-режиме почти нет задержки
+        if turbo:
+            time.sleep(random.uniform(0.5, 1))
+        else:
+            time.sleep(random.uniform(1, 2))
+    
     return platform_new_items
 
 def check_all_marketplaces(chat_id=None):
@@ -51,12 +57,12 @@ def check_all_marketplaces(chat_id=None):
         platforms = BOT_STATE['selected_platforms'].copy()
         mode = BOT_STATE['mode']
         selected_brands = BOT_STATE['selected_brands'].copy()
+        turbo = BOT_STATE.get('turbo_mode', False)
 
-    logger.info(f"🚀 Запуск проверки в режиме {mode}")
+    logger.info(f"🚀 Запуск проверки в режиме {'ТУРБО' if turbo else 'обычном'}")
 
-    # Формируем список вариаций для каждой платформы
+    # Формируем список вариаций
     if mode == 'auto':
-        # Авторежим: случайные вариации из всех брендов
         all_vars = []
         for group in BRAND_GROUPS:
             for typ in ['latin', 'jp', 'cn', 'universal']:
@@ -64,10 +70,9 @@ def check_all_marketplaces(chat_id=None):
                     all_vars.extend(group['variations'][typ])
         all_vars = list(set(all_vars))
         random.shuffle(all_vars)
-        # Для каждой платформы берём, например, 20 случайных вариаций
-        vars_per_platform = {p: all_vars[:20] for p in platforms}
+        # В турбо-режиме проверяем больше вариаций
+        vars_per_platform = {p: all_vars[:30] if turbo else all_vars[:20] for p in platforms}
     else:
-        # Ручной режим: используем выбранные бренды
         if not selected_brands:
             logger.warning("Ручной режим, но бренды не выбраны")
             with state_lock:
@@ -75,7 +80,7 @@ def check_all_marketplaces(chat_id=None):
             return
         vars_per_platform = expand_selected_brands_for_platforms(selected_brands, platforms)
 
-    # Запускаем параллельную проверку платформ
+    # Параллельная проверка
     all_new_items = []
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         future_to_platform = {
@@ -90,13 +95,13 @@ def check_all_marketplaces(chat_id=None):
             except Exception as e:
                 logger.error(f"Ошибка при проверке {platform}: {e}")
 
-    # Отправляем уведомления о новых товарах
+    # Отправляем уведомления
     send_func = BOT_STATE.get('send_to_telegram')
     if send_func and all_new_items:
         for item in all_new_items:
             send_func(item)
 
-    # Обновляем статистику и время последней проверки
+    # Обновляем статистику
     with state_lock:
         BOT_STATE['stats']['total_checks'] += 1
         BOT_STATE['stats']['total_finds'] += len(all_new_items)
@@ -110,13 +115,19 @@ def run_scheduler():
     logger.info("Планировщик запущен")
     last_run = 0
     first = True
+    
     while not BOT_STATE.get('shutdown', False):
         with state_lock:
-            interval = BOT_STATE['interval'] * 60
+            turbo = BOT_STATE.get('turbo_mode', False)
+            if turbo:
+                interval = 5 * 60  # 5 минут в турбо-режиме
+            else:
+                interval = BOT_STATE['interval'] * 60
             paused = BOT_STATE['paused']
+        
         now = time.time()
         if not paused and not first and (now - last_run) >= interval:
-            logger.info("Запуск по расписанию")
+            logger.info(f"Запуск по расписанию (интервал {interval//60} мин)")
             Thread(target=check_all_marketplaces).start()
             last_run = now
         elif first:

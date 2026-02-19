@@ -41,7 +41,7 @@ def safe_select(element, selectors):
             return elem
     return None
 
-# ================== Безопасные HTTP-запросы ==================
+# ================== Безопасные HTTP-запросы с улучшенным логированием ==================
 def make_request(url, headers=None, timeout=REQUEST_TIMEOUT, retries=MAX_RETRIES):
     """
     Делает GET-запрос с повторами, ротацией User-Agent и поддержкой прокси.
@@ -58,15 +58,19 @@ def make_request(url, headers=None, timeout=REQUEST_TIMEOUT, retries=MAX_RETRIES
             r.raise_for_status()
             return r
         except requests.exceptions.Timeout:
-            logger.warning(f"Таймаут {attempt+1}/{retries} для {url}")
+            logger.warning(f"⏰ Таймаут {attempt+1}/{retries} для {url}")
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 403:
-                logger.warning(f"403 Forbidden: {url} – меняем User-Agent")
-                headers['User-Agent'] = get_next_user_agent()
+                logger.warning(f"🚫 403 Forbidden: {url} – меняем User-Agent")
+                headers = {'User-Agent': get_next_user_agent()}
+            elif e.response.status_code == 404:
+                logger.warning(f"🔍 404 Not Found: {url} – страница не найдена")
             else:
-                logger.warning(f"HTTP ошибка {attempt+1}/{retries} для {url}: {e}")
+                logger.warning(f"🌐 HTTP ошибка {attempt+1}/{retries} для {url}: {e}")
+        except requests.exceptions.ConnectionError:
+            logger.warning(f"🔌 Ошибка подключения {attempt+1}/{retries} для {url}")
         except Exception as e:
-            logger.warning(f"Ошибка {attempt+1}/{retries} для {url}: {e}")
+            logger.warning(f"❌ Неизвестная ошибка {attempt+1}/{retries} для {url}: {e}")
 
         if attempt < retries - 1:
             time.sleep(RETRY_DELAY * (attempt + 1))
@@ -88,9 +92,3 @@ def encode_keyword(keyword):
     Кодирует ключевое слово для URL (например для японских символов)
     """
     return quote(keyword)
-
-# ================== Telegram-отправка (базовые функции) ==================
-# Эти функции будут переопределены в telegram_bot.py, но здесь они могут использоваться для тестов
-def send_telegram_message(text, photo_url=None, keyboard=None, chat_id=None):
-    """Заглушка, должна быть заменена в telegram_bot.py"""
-    logger.warning("send_telegram_message не реализована")

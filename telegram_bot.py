@@ -77,10 +77,13 @@ def send_telegram_album(media_group, chat_id=None):
 # ==================== Функции меню ====================
 
 def send_main_menu(chat_id=None):
+    turbo_status = "🐱‍🏍 ТУРБО" if BOT_STATE.get('turbo_mode') else "🐢 Обычный"
+    
     keyboard = {
         "inline_keyboard": [
             [{"text": "🚀 Запустить проверку", "callback_data": "start_check"}],
             [{"text": "⚙️ Режим работы", "callback_data": "mode_menu"}],
+            [{"text": f"⚡ Режим: {turbo_status}", "callback_data": "toggle_turbo"}],
             [{"text": "🌐 Выбор площадок", "callback_data": "platforms_menu"}],
             [{"text": "📊 Статистика", "callback_data": "stats"}],
             [{"text": "📋 Список брендов", "callback_data": "brands_list"}],
@@ -96,6 +99,7 @@ def send_main_menu(chat_id=None):
         msg = (
             f"🤖 Мониторинг\n"
             f"Режим: {BOT_STATE['mode']}\n"
+            f"Турбо: {'Вкл' if BOT_STATE.get('turbo_mode') else 'Выкл'}\n"
             f"Статус: {pause_status}\n"
             f"Площадки: {platforms}\n"
             f"{brands_info}\n"
@@ -198,6 +202,7 @@ def send_stats(chat_id=None):
             f"Найдено всего: {BOT_STATE['stats']['total_finds']}\n\n"
             f"По площадкам:\n{platform_stats}\n\n"
             f"Режим: {BOT_STATE['mode']}\n"
+            f"Турбо: {'Вкл' if BOT_STATE.get('turbo_mode') else 'Выкл'}\n"
             f"Статус: {'⏸ ПАУЗА' if BOT_STATE['paused'] else '▶️ АКТИВЕН'}\n"
             f"Выбрано брендов: {len(BOT_STATE['selected_brands'])} / вариаций: {var_count}\n"
             f"Площадок: {len(BOT_STATE['selected_platforms'])}/{len(ALL_PLATFORMS)}\n\n"
@@ -258,6 +263,12 @@ def handle_update(update):
                 send_main_menu(chat_id)
             elif data == 'mode_menu':
                 send_mode_menu(chat_id)
+            elif data == 'toggle_turbo':
+                with state_lock:
+                    BOT_STATE['turbo_mode'] = not BOT_STATE['turbo_mode']
+                    mode = "🐱‍🏍 ТУРБО" if BOT_STATE['turbo_mode'] else "🐢 Обычный"
+                send_telegram_message(f"⚡ Режим изменён: {mode}", chat_id=chat_id)
+                send_main_menu(chat_id)
             elif data == 'platforms_menu':
                 send_platforms_menu(chat_id)
             elif data == 'stats':

@@ -22,6 +22,7 @@ BOT_START_TIME = time.time()
 # ==================== Состояние бота ====================
 BOT_STATE = {
     "mode": "auto",                       # 'auto' или 'manual'
+    "turbo_mode": False,                   # турбо-режим (5 мин)
     "selected_brands": [],                 # выбранные бренды
     "selected_platforms": ALL_PLATFORMS.copy(),  # все по умолчанию
     "last_check": None,                    # время последней проверки
