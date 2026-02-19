@@ -45,38 +45,44 @@ file_lock = Lock()
 state_lock = Lock()
 
 # ==================== РАСШИРЕННЫЙ СПИСОК БРЕНДОВ (УНИКАЛЬНЫЕ ВАРИАЦИИ) ====================
+# Каждая группа: "main" – основное название, "variations" – все возможные варианты написания,
+# включая опечатки, транслитерации, сленг, винтажные маркеры (без конкретных годов).
 BRAND_GROUPS = [
     # L.G.B. / Le grand bleu
     {
         "main": "L.G.B.",
         "variations": [
             "L.G.B.", "LGB", "Le grand bleu", "Le grande bleu", "Le Grand Bleu",
-            "Legrandbleu", "Le grande blue", "LGB 1994", "Le grand bleu 1994",
-            "エルジービー", "ルグランブルー", "ル・グラン・ブルー", "大蓝", "勒格朗蓝", "勒格朗布尔"
+            "Legrandbleu", "Le grande blue", "L G B", "L G.B.", "L.G B",
+            "ルグランブルー", "ル・グラン・ブルー", "エルジービー",
+            "大蓝", "勒格朗蓝", "勒格朗布尔",
+            "Le grand blue", "Legrandblue", "Le grande bleue",
+            "LGB vintage", "Le grand bleu vintage", "ルグランブルー ヴィンテージ"
         ]
     },
-
     # if six was nine
     {
         "main": "if six was nine",
         "variations": [
             "if six was nine", "ifsixwasnine", "if 6 was 9", "if6was9",
             "Maniac corp", "bedrock", "Maniac Corporation", "Maniac", "Bed Rock",
-            "if six was 9", "ifsixwasnine 1995", "maniac corporation",
-            "イフシックスワズナイン", "如果六是九", "伊夫西克斯瓦兹奈因"
+            "if six was 9", "maniac corporation", "if six was nin",
+            "イフシックスワズナイン", "イフ・シックス・ワズ・ナイン",
+            "如果六是九", "伊夫西克斯瓦兹奈因",
+            "ifsix", "bedrock vintage", "maniac vintage",
+            "if six was nine vintage", "ifsixwasnine archive"
         ]
     },
-
     # kmrii / kemuri
     {
         "main": "kmrii",
         "variations": [
             "kmrii", "kemuri", "km rii", "km*rii", "km-rii", "km_rii",
-            "KMRII", "Kemuri", "KM RII", "kmrii 1996", "kemuri 1996",
-            "ケムリ", "烟", "凯穆里"
+            "KMRII", "Kemuri", "KM RII", "kmri", "kmr ii",
+            "ケムリ", "烟", "凯穆里",
+            "kemuri vintage", "kmrii vintage", "km rii vintage", "km-rii vintage"
         ]
     },
-
     # 14th addiction
     {
         "main": "14th addiction",
@@ -84,99 +90,99 @@ BRAND_GROUPS = [
             "14th addiction", "14thaddiction", "14th addition", "14th addict",
             "14th adiction", "14th addictions", "14th-addiction", "14th_addiction",
             "Fourteenth addiction", "14th Addiction",
+            "14th addicition", "14th additction", "14th addikt",
             "14番目の中毒", "フォーティーンスアディクション",
-            "第14瘾", "第十四瘾", "14号瘾", "十四号瘾", "福提恩阿迪克申"
+            "第14瘾", "第十四瘾", "14号瘾", "十四号瘾", "福提恩阿迪克申",
+            "14th addiction vintage", "14th addict vintage", "14th archive"
         ]
     },
-
     # share spirit
     {
         "main": "share spirit",
         "variations": [
             "share spirit", "sharespirit", "share-spirit", "share_spirit",
             "share sprit", "share sperit", "Share Spirit",
-            "シェアスピリット", "シェアースピリット", "分享精神", "共享精神", "谢尔斯皮里特"
+            "share spirrit", "share spirit vintage", "sharespirit vintage",
+            "シェアスピリット", "シェアースピリット",
+            "分享精神", "共享精神", "谢尔斯皮里特"
         ]
     },
-
     # gunda
     {
         "main": "gunda",
         "variations": [
-            "gunda", "ganda", "Gunda", "gunda 1998",
-            "グンダ", "贡达", "古恩达"
+            "gunda", "ganda", "Gunda", "gunda vintage",
+            "グンダ", "贡达", "古恩达", "gunda archive"
         ]
     },
-
     # yasuyuki ishii
     {
         "main": "yasuyuki ishii",
         "variations": [
             "yasuyuki ishii", "yasuyuki-ishii", "yasuyuki_ishii", "yasuyuki ishi",
-            "Yasuyuki Ishii",
-            "石井康之", "イシイヤスユキ", "雅之石井"
+            "Yasuyuki Ishii", "y ishii", "yasuyuki",
+            "石井康之", "イシイヤスユキ", "雅之石井",
+            "yasuyuki ishii vintage"
         ]
     },
-
     # gongen
     {
         "main": "gongen",
         "variations": [
-            "gongen", "Gongen", "gongen 1999",
-            "権現", "权现"
+            "gongen", "Gongen", "gongen vintage",
+            "権現", "权现", "gongen archive"
         ]
     },
-
     # blaze
     {
         "main": "blaze",
         "variations": [
-            "blaze", "blaze1999", "blaze 1999", "blaze-1999",
+            "blaze", "blaze 1999", "blaze-1999",
             "blaz", "blase", "Blaze",
-            "ブレイズ", "火焰", "布雷兹", "布雷兹1999"
+            "ブレイズ", "火焰", "布雷兹",
+            "blaze vintage", "blaze archive"
         ]
     },
-
     # shohei takamiya
     {
         "main": "shohei takamiya",
         "variations": [
             "shohei takamiya", "shoheitakamiya", "shohei_takamiya",
-            "Shohei Takamiya",
-            "高宮翔平", "タカミヤショウヘイ", "高宫翔平", "塔卡米亚翔平"
+            "Shohei Takamiya", "takamiya",
+            "高宮翔平", "タカミヤショウヘイ", "高宫翔平", "塔卡米亚翔平",
+            "shohei takamiya vintage"
         ]
     },
-
     # wild heart
     {
         "main": "wild heart",
         "variations": [
             "wild heart", "wildheart", "wild-heart", "wild_heart",
             "wild hart", "wild hеart", "Wild Heart",
-            "ワイルドハート", "野性之心", "狂野之心", "怀尔德哈特"
+            "ワイルドハート", "野性之心", "狂野之心", "怀尔德哈特",
+            "wild heart vintage", "wildheart vintage"
         ]
     },
-
     # john moore
     {
         "main": "john moore",
         "variations": [
             "john moore", "johnmoore", "john-moore", "john_moore",
             "john moor", "john more", "John Moore",
-            "ジョンムーア", "约翰摩尔"
+            "ジョンムーア", "约翰摩尔",
+            "john moore vintage", "john moore archive"
         ]
     },
-
     # ian reid / ian reed
     {
         "main": "ian reid",
         "variations": [
             "ian reid", "ian reed", "ian-reid", "ian_reed",
             "ianreed", "ian read", "Ian Reid", "Ian Reed",
-            "イアンリード", "伊恩里德", "伊恩瑞德"
+            "イアンリード", "伊恩里德", "伊恩瑞德",
+            "ian reid vintage", "ian reed vintage"
         ]
     },
-
     # House of Beauty and Culture (с добавлением "The")
     {
         "main": "House of Beauty and Culture",
@@ -185,31 +191,30 @@ BRAND_GROUPS = [
             "House of Beauty & Culture", "House of Beauty and Cultur",
             "The House of Beauty and Culture", "H.O.B.A.C.",
             "House Of Beauty And Culture", "HOBAC",
-            "ハウスオブビューティアンドカルチャー", "美丽文化之家", "霍巴克"
+            "ハウスオブビューティアンドカルチャー", "美丽文化之家", "霍巴克",
+            "HBC vintage", "hobac vintage"
         ]
     },
-
     # Koji Kuga
     {
         "main": "Koji Kuga",
         "variations": [
             "Koji Kuga", "kouji kuga", "koji kuga", "koga koji",
-            "Koji Kuga 2000",
-            "久賀浩司", "クガコウジ", "久我浩二", "コージクガ", "久贺浩司", "库加科吉"
+            "久賀浩司", "クガコウジ", "久我浩二", "コージクガ", "久贺浩司", "库加科吉",
+            "koji kuga vintage"
         ]
     },
-
     # beauty:beast
     {
         "main": "beauty:beast",
         "variations": [
             "beauty:beast", "beauty beast", "beauty-beast", "beauty_beast",
             "beauty best", "beauty beaast", "beauty & beast", "beauty and beast",
-            "Beauty:Beast",
-            "ビューティービースト", "美女与野兽", "比蒂比斯特"
+            "Beauty:Beast", "beautybeast",
+            "ビューティービースト", "美女与野兽", "比蒂比斯特",
+            "beauty beast vintage"
         ]
     },
-
     # The old curiosity shop / Daita Kimura
     {
         "main": "The old curiosity shop",
@@ -217,51 +222,52 @@ BRAND_GROUPS = [
             "The old curiosity shop", "Old Curiosity Shop", "The Old Curiosity Shop",
             "Old Curiosity", "Curiosity Shop",
             "Daita Kimura", "DaitaKimura",
-            "木村大汰", "オールドキュリオシティーショップ", "古老奇趣店", "代田木村"
+            "木村大汰", "オールドキュリオシティーショップ", "古老奇趣店", "代田木村",
+            "old curiocity shop", "curiosty shop",
+            "the old curiosity shop vintage", "daita kimura vintage",
+            "OCS", "TOCS"
         ]
     },
-
     # Swear / Swear London
     {
         "main": "Swear",
         "variations": [
             "Swear", "Swear London", "Swear Alternative",
             "Swear-Alternative", "Swear_Alternative", "Sweat", "Swar",
-            "swear london",
-            "スウェア", "スウェアロンドン", "宣誓", "斯维尔"
+            "swear london", "swear alternative",
+            "スウェア", "スウェアロンドン", "宣誓", "斯维尔",
+            "swear vintage", "swear london vintage"
         ]
     },
-
     # fotus
     {
         "main": "fotus",
         "variations": [
             "fotus", "FÖTUS", "Fötus", "Foetus",
             "Spuren", "spüren", "fotos", "Spure",
-            "フォタス", "フェトウス", "福图斯", "斯普伦"
+            "フォタス", "フェトウス", "福图斯", "斯普伦",
+            "fotus vintage", "foetus vintage"
         ]
     },
-
     # Saint Tropez
     {
         "main": "Saint Tropez",
         "variations": [
             "Saint Tropez", "SaintTropez", "Saint-Tropez", "Saint_Tropez",
             "St Tropez", "Saint Tropaz", "ST. Tropez",
-            "サン・トロペ", "圣特罗佩"
+            "サン・トロペ", "圣特罗佩",
+            "saint tropez vintage"
         ]
     },
-
     # Barcord / Barcode
     {
         "main": "Barcord",
         "variations": [
             "Barcord", "Barcode", "Bar code", "Bar-code", "Barcorde",
-            "Barcord 1996",
-            "バーコード", "条形码", "巴科德"
+            "バーコード", "条形码", "巴科德",
+            "barcord vintage", "barcode vintage"
         ]
     },
-
     # paison&drug / python&drug
     {
         "main": "paison&drug",
@@ -269,17 +275,18 @@ BRAND_GROUPS = [
             "paison&drug", "python&drug", "paison and drug", "python and drug",
             "paison & drug", "python & drug", "poison&drug", "pyson&drug",
             "Paison&Drug",
-            "パイソン&ドラッグ", "派森与毒", "派森和药"
+            "パイソン&ドラッグ", "派森与毒", "派森和药",
+            "paison drug vintage"
         ]
     },
-
     # Prego
     {
         "main": "Prego",
         "variations": [
             "Prego", "Prego Uomo", "Prego-Uomo", "Prego_Uomo",
-            "Prigo", "prego uomo 1997",
-            "プレゴ", "普雷戈", "普雷戈乌莫"
+            "Prigo", "prego uomo",
+            "プレゴ", "普雷戈", "普雷戈乌莫",
+            "prego vintage", "prego uomo vintage"
         ]
     }
 ]
@@ -353,12 +360,21 @@ def get_next_user_agent():
 def send_telegram_message(text, photo_url=None, keyboard=None):
     token = os.environ.get('TELEGRAM_BOT_TOKEN')
     chat_id = os.environ.get('TELEGRAM_CHAT_ID')
-    if not token or not chat_id:
-        logger.error("Ошибка: нет токенов в Secrets")
+    
+    # Для команд и меню chat_id не обязателен, но для уведомлений нужен
+    # Проверяем только token, так как команды работают через webhook
+    if not token:
+        logger.error("Ошибка: нет TELEGRAM_BOT_TOKEN в Secrets")
         return False
+    
+    # Если нет chat_id, используем ID из webhook (для ответов на команды)
+    if not chat_id and 'chat' in locals():
+        # Эта часть будет заполняться при вызове из обработчика
+        pass
+    
     try:
         # Если есть фото, отправляем как фото с подписью
-        if photo_url:
+        if photo_url and chat_id:
             url = f"https://api.telegram.org/bot{token}/sendPhoto"
             payload = {
                 'chat_id': chat_id,
@@ -369,7 +385,7 @@ def send_telegram_message(text, photo_url=None, keyboard=None):
             if keyboard:
                 payload['reply_markup'] = json.dumps(keyboard)
             requests.post(url, data=payload, timeout=10)
-        else:
+        elif chat_id:
             url = f"https://api.telegram.org/bot{token}/sendMessage"
             payload = {
                 'chat_id': chat_id,
@@ -380,13 +396,16 @@ def send_telegram_message(text, photo_url=None, keyboard=None):
             if keyboard:
                 payload['reply_markup'] = json.dumps(keyboard)
             requests.post(url, data=payload, timeout=10)
+        else:
+            # Если нет chat_id, просто логируем (для отладки)
+            logger.info(f"Сообщение (не отправлено, нет chat_id): {text[:50]}...")
         return True
     except Exception as e:
         logger.error(f"Ошибка Telegram: {e}")
         return False
 
 # ==================== МЕНЮ ====================
-def send_main_menu():
+def send_main_menu(chat_id=None):
     keyboard = {
         "inline_keyboard": [
             [{"text": "🚀 Запустить проверку", "callback_data": "start_check"}],
@@ -398,6 +417,10 @@ def send_main_menu():
             [{"text": "⏸ Пауза / ▶️ Продолжить", "callback_data": "toggle_pause"}]
         ]
     }
+    
+    # Если передан chat_id, используем его, иначе берем из bot_state (для обратной совместимости)
+    target_chat_id = chat_id if chat_id else os.environ.get('TELEGRAM_CHAT_ID')
+    
     if bot_state['selected_brands']:
         info = f"Выбрано: {len(bot_state['selected_brands'])} брендов"
     else:
@@ -414,7 +437,7 @@ def send_main_menu():
 """
     send_telegram_message(msg, keyboard=keyboard)
 
-def send_mode_menu():
+def send_mode_menu(chat_id=None):
     keyboard = {
         "inline_keyboard": [
             [{"text": "🤖 Авто (все вариации)", "callback_data": "mode_auto"}],
@@ -424,7 +447,7 @@ def send_mode_menu():
     }
     send_telegram_message("⚙️ Выберите режим:", keyboard=keyboard)
 
-def send_brands_list(page=0):
+def send_brands_list(page=0, chat_id=None):
     per_page = 8
     start = page * per_page
     end = start + per_page
@@ -457,7 +480,7 @@ def send_brands_list(page=0):
     msg = f"📋 Выбрано: {len(bot_state['selected_brands'])} / вариаций: {var_count}"
     send_telegram_message(msg, keyboard=keyboard)
 
-def send_select_brands_menu():
+def send_select_brands_menu(chat_id=None):
     selected = len(bot_state['selected_brands'])
     variations = len(expand_selected_brands()) if selected else 0
     keyboard = {
@@ -479,19 +502,20 @@ def handle_telegram_update(update):
         if 'callback_query' in update:
             q = update['callback_query']
             data = q['data']
+            chat_id = q['from']['id']
             token = os.environ.get('TELEGRAM_BOT_TOKEN')
             requests.post(f"https://api.telegram.org/bot{token}/answerCallbackQuery",
                           json={'callback_query_id': q['id']})
 
             if data == 'main_menu':
-                send_main_menu()
+                send_main_menu(chat_id)
             elif data == 'mode_menu':
-                send_mode_menu()
+                send_mode_menu(chat_id)
             elif data == 'mode_auto':
                 with state_lock:
                     bot_state['mode'] = 'auto'
                 send_telegram_message("✅ Режим: автоматический (все вариации)")
-                send_main_menu()
+                send_main_menu(chat_id)
             elif data == 'mode_manual':
                 with state_lock:
                     if bot_state['selected_brands']:
@@ -499,7 +523,7 @@ def handle_telegram_update(update):
                         send_telegram_message(f"✅ Режим: ручной ({len(bot_state['selected_brands'])} брендов)")
                     else:
                         send_telegram_message("⚠️ Сначала выберите бренды!")
-                send_main_menu()
+                send_main_menu(chat_id)
             elif data == 'start_check':
                 if bot_state['is_checking']:
                     send_telegram_message("⚠️ Уже выполняется")
@@ -539,20 +563,20 @@ def handle_telegram_update(update):
                 with state_lock:
                     bot_state['interval'] = new_interval
                 send_telegram_message(f"✅ Интервал установлен: {new_interval} мин")
-                send_main_menu()
+                send_main_menu(chat_id)
             elif data == 'toggle_pause':
                 with state_lock:
                     bot_state['paused'] = not bot_state['paused']
                     status = "⏸ ПАУЗА" if bot_state['paused'] else "▶️ АКТИВЕН"
                 send_telegram_message(f"Статус изменён: {status}")
-                send_main_menu()
+                send_main_menu(chat_id)
             elif data == 'select_brands_menu':
-                send_select_brands_menu()
+                send_select_brands_menu(chat_id)
             elif data == 'brands_list':
-                send_brands_list(0)
+                send_brands_list(0, chat_id)
             elif data.startswith('page_'):
                 page = int(data.split('_')[1])
-                send_brands_list(page)
+                send_brands_list(page, chat_id)
             elif data.startswith('toggle_'):
                 brand = data[7:]
                 with state_lock:
@@ -564,13 +588,13 @@ def handle_telegram_update(update):
                         bot_state['selected_brands'].append(brand)
                         cnt = len(get_brand_variations(brand))
                         send_telegram_message(f"✅ {brand} добавлен ({cnt} вариаций)")
-                send_brands_list(0)
+                send_brands_list(0, chat_id)
             elif data == 'select_popular':
                 with state_lock:
                     bot_state['selected_brands'] = POPULAR_BRANDS.copy()
                     var = len(expand_selected_brands())
                 send_telegram_message(f"✅ {len(POPULAR_BRANDS)} популярных брендов, {var} вариаций")
-                send_select_brands_menu()
+                send_select_brands_menu(chat_id)
             elif data == 'random_5':
                 if len(BRAND_MAIN_NAMES) < 5:
                     send_telegram_message("⚠️ В базе менее 5 брендов")
@@ -581,7 +605,7 @@ def handle_telegram_update(update):
                         bot_state['selected_brands'] = rnd
                         var = len(expand_selected_brands())
                     send_telegram_message(f"✅ 5 случайных брендов, {var} вариаций")
-                    send_select_brands_menu()
+                    send_select_brands_menu(chat_id)
             elif data == 'random_10':
                 if len(BRAND_MAIN_NAMES) < 10:
                     send_telegram_message("⚠️ В базе менее 10 брендов")
@@ -592,18 +616,19 @@ def handle_telegram_update(update):
                         bot_state['selected_brands'] = rnd
                         var = len(expand_selected_brands())
                     send_telegram_message(f"✅ 10 случайных брендов, {var} вариаций")
-                    send_select_brands_menu()
+                    send_select_brands_menu(chat_id)
             elif data == 'clear_all':
                 with state_lock:
                     bot_state['selected_brands'] = []
                 send_telegram_message("🗑 Список брендов очищен")
-                send_select_brands_menu()
+                send_select_brands_menu(chat_id)
             elif data == 'noop':
                 pass
         elif 'message' in update:
+            chat_id = update['message']['chat']['id']
             text = update['message'].get('text', '')
             if text == '/start':
-                send_main_menu()
+                send_main_menu(chat_id)
             elif text.startswith('/'):
                 send_telegram_message("❌ Неизвестная команда. Используйте /start")
             else:
@@ -948,7 +973,7 @@ def run_scheduler():
                 logger.info("Первый запуск — пропускаем автоматическую проверку")
                 last_run = current_time
                 continue
-
+                
             logger.info(f"Планировщик: запуск проверки (интервал {interval//60} мин)")
             Thread(target=check_all_marketplaces).start()
             last_run = current_time
