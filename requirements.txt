@@ -5,3 +5,4 @@ schedule
 fake-useragent
 lxml
 python-dotenv
+telegram
