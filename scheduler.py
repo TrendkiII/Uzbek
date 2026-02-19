@@ -1,78 +1,125 @@
-import hashlib
 import time
 import random
-from urllib.parse import urljoin, quote
-from bs4 import BeautifulSoup
-from config import USER_AGENTS_POOL, get_next_user_agent, PROXY, REQUEST_TIMEOUT, MAX_RETRIES, RETRY_DELAY
-import requests
-import logging
+from threading import Thread
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from config import BOT_STATE, state_lock, logger, MAX_WORKERS, ITEMS_PER_PAGE
+from brands import expand_selected_brands_for_platforms, BRAND_GROUPS
+from parsers import PARSERS
+from database import add_item
+from utils import generate_item_id
 
-logger = logging.getLogger(__name__)
+def process_new_items(items, platform):
+    """Обрабатывает список товаров, сохраняет новые и возвращает их"""
+    new_items = []
+    for item in items:
+        # Добавляем ID, если его нет
+        if 'id' not in item:
+            item['id'] = generate_item_id(item)
+        if add_item(item):
+            new_items.append(item)
+            # Обновляем статистику
+            with state_lock:
+                if platform in BOT_STATE['stats']['platform_stats']:
+                    BOT_STATE['stats']['platform_stats'][platform]['finds'] += 1
+    return new_items
 
-# ================== Генерация уникального ID для товара ==================
-def generate_item_id(item):
-    """
-    Формирует уникальный ID на основе source, url и title.
-    """
-    unique = f"{item['source']}_{item['url']}_{item['title']}"
-    return hashlib.md5(unique.encode('utf-8')).hexdigest()
+def check_platform(platform, variations, chat_id=None):
+    """Парсит одну платформу по списку вариаций."""
+    parser = PARSERS.get(platform)
+    if not parser:
+        logger.warning(f"Нет парсера для {platform}")
+        return []
+    platform_new_items = []
+    for var in variations:
+        logger.info(f"[{platform}] Поиск: {var}")
+        items = parser(var)
+        if items:
+            new = process_new_items(items, platform)
+            platform_new_items.extend(new)
+            logger.info(f"[{platform}] Найдено {len(items)} товаров, новых {len(new)}")
+        # Небольшая задержка между запросами
+        time.sleep(random.uniform(1, 2))
+    return platform_new_items
 
-# ================== Безопасный CSS селектор ==================
-def safe_select(element, selectors):
-    """
-    Пробует список селекторов и возвращает первый найденный элемент.
-    Если ничего не найдено, возвращает None.
-    """
-    for sel in selectors:
-        elem = element.select_one(sel)
-        if elem:
-            return elem
-    return None
+def check_all_marketplaces(chat_id=None):
+    """Основная функция проверки всех выбранных площадок."""
+    with state_lock:
+        if BOT_STATE['is_checking'] or BOT_STATE['paused']:
+            logger.warning("Проверка уже выполняется или бот на паузе")
+            return
+        BOT_STATE['is_checking'] = True
+        platforms = BOT_STATE['selected_platforms'].copy()
+        mode = BOT_STATE['mode']
+        selected_brands = BOT_STATE['selected_brands'].copy()
 
-# ================== Безопасные HTTP-запросы ==================
-def make_request(url, headers=None, timeout=REQUEST_TIMEOUT, retries=MAX_RETRIES):
-    """
-    Делает GET-запрос с повторами, ротацией User-Agent и поддержкой прокси.
-    Возвращает объект Response или None.
-    """
-    if headers is None:
-        headers = {'User-Agent': get_next_user_agent()}
+    logger.info(f"🚀 Запуск проверки в режиме {mode}")
 
-    proxies = {'http': PROXY, 'https': PROXY} if PROXY else None
+    # Формируем список вариаций для каждой платформы
+    if mode == 'auto':
+        # Авторежим: случайные вариации из всех брендов
+        all_vars = []
+        for group in BRAND_GROUPS:
+            for typ in ['latin', 'jp', 'cn', 'universal']:
+                if typ in group['variations']:
+                    all_vars.extend(group['variations'][typ])
+        all_vars = list(set(all_vars))
+        random.shuffle(all_vars)
+        # Для каждой платформы берём, например, 20 случайных вариаций
+        vars_per_platform = {p: all_vars[:20] for p in platforms}
+    else:
+        # Ручной режим: используем выбранные бренды
+        if not selected_brands:
+            logger.warning("Ручной режим, но бренды не выбраны")
+            with state_lock:
+                BOT_STATE['is_checking'] = False
+            return
+        vars_per_platform = expand_selected_brands_for_platforms(selected_brands, platforms)
 
-    for attempt in range(retries):
-        try:
-            r = requests.get(url, headers=headers, timeout=timeout, proxies=proxies)
-            r.raise_for_status()
-            return r
-        except requests.exceptions.Timeout:
-            logger.warning(f"Таймаут {attempt+1}/{retries} для {url}")
-        except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 403:
-                logger.warning(f"403 Forbidden: {url} – меняем User-Agent")
-                headers['User-Agent'] = get_next_user_agent()
-            else:
-                logger.warning(f"HTTP ошибка {attempt+1}/{retries} для {url}: {e}")
-        except Exception as e:
-            logger.warning(f"Ошибка {attempt+1}/{retries} для {url}: {e}")
+    # Запускаем параллельную проверку платформ
+    all_new_items = []
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        future_to_platform = {
+            executor.submit(check_platform, p, vars_per_platform[p], chat_id): p
+            for p in platforms if p in PARSERS and vars_per_platform[p]
+        }
+        for future in as_completed(future_to_platform):
+            platform = future_to_platform[future]
+            try:
+                new_items = future.result()
+                all_new_items.extend(new_items)
+            except Exception as e:
+                logger.error(f"Ошибка при проверке {platform}: {e}")
 
-        if attempt < retries - 1:
-            time.sleep(RETRY_DELAY * (attempt + 1))
-    return None
+    # Отправляем уведомления о новых товарах
+    send_func = BOT_STATE.get('send_to_telegram')
+    if send_func and all_new_items:
+        for item in all_new_items:
+            send_func(item)
 
-# ================== URL вспомогательные ==================
-def make_full_url(base, href):
-    """
-    Превращает относительный href в абсолютный URL.
-    """
-    if not href:
-        return ''
-    if href.startswith('http'):
-        return href
-    return urljoin(base, href)
+    # Обновляем статистику и время последней проверки
+    with state_lock:
+        BOT_STATE['stats']['total_checks'] += 1
+        BOT_STATE['stats']['total_finds'] += len(all_new_items)
+        BOT_STATE['last_check'] = time.strftime('%Y-%m-%d %H:%M:%S')
+        BOT_STATE['is_checking'] = False
 
-def encode_keyword(keyword):
-    """
-    Кодирует ключевое слово для URL (например для японских символов)
-    """
-    return quote(keyword)
+    logger.info(f"✅ Проверка завершена. Найдено новых товаров: {len(all_new_items)}")
+
+def run_scheduler():
+    """Планировщик, запускающий проверки по интервалу."""
+    logger.info("Планировщик запущен")
+    last_run = 0
+    first = True
+    while not BOT_STATE.get('shutdown', False):
+        with state_lock:
+            interval = BOT_STATE['interval'] * 60
+            paused = BOT_STATE['paused']
+        now = time.time()
+        if not paused and not first and (now - last_run) >= interval:
+            logger.info("Запуск по расписанию")
+            Thread(target=check_all_marketplaces).start()
+            last_run = now
+        elif first:
+            first = False
+            last_run = now
+        time.sleep(30)

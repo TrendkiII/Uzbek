@@ -1,13 +1,25 @@
 import hashlib
 import time
 import random
-from urllib.parse import urljoin, quote
-from bs4 import BeautifulSoup
-from config import USER_AGENTS_POOL, get_next_user_agent, PROXY, REQUEST_TIMEOUT, MAX_RETRIES, RETRY_DELAY
 import requests
 import logging
+from urllib.parse import urljoin, quote
+from bs4 import BeautifulSoup
+from fake_useragent import UserAgent
+from config import PROXY, REQUEST_TIMEOUT, MAX_RETRIES, RETRY_DELAY
 
 logger = logging.getLogger(__name__)
+
+# ================== Управление User-Agent ==================
+ua = UserAgent()
+USER_AGENTS = [ua.random for _ in range(20)]
+UA_INDEX = 0
+
+def get_next_user_agent():
+    global UA_INDEX
+    agent = USER_AGENTS[UA_INDEX % len(USER_AGENTS)]
+    UA_INDEX += 1
+    return agent
 
 # ================== Генерация уникального ID для товара ==================
 def generate_item_id(item):
@@ -76,3 +88,9 @@ def encode_keyword(keyword):
     Кодирует ключевое слово для URL (например для японских символов)
     """
     return quote(keyword)
+
+# ================== Telegram-отправка (базовые функции) ==================
+# Эти функции будут переопределены в telegram_bot.py, но здесь они могут использоваться для тестов
+def send_telegram_message(text, photo_url=None, keyboard=None, chat_id=None):
+    """Заглушка, должна быть заменена в telegram_bot.py"""
+    logger.warning("send_telegram_message не реализована")

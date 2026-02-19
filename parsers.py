@@ -1,70 +1,16 @@
-import requests
-from bs4 import BeautifulSoup
-from urllib.parse import quote, urljoin
-import random
-import time
 import logging
-from config import REQUEST_TIMEOUT, MAX_RETRIES, RETRY_DELAY, ITEMS_PER_PAGE, PROXY
-from brands import ALL_PLATFORMS
-import hashlib
-from fake_useragent import UserAgent
+from bs4 import BeautifulSoup
+from urllib.parse import urljoin
+from config import ITEMS_PER_PAGE
+from utils import make_request, safe_select, generate_item_id, encode_keyword, make_full_url
 
-# ================= User-Agent =================
-ua = UserAgent()
-USER_AGENTS = [ua.random for _ in range(20)]
-UA_INDEX = 0
-
-def get_next_user_agent():
-    global UA_INDEX
-    ua = USER_AGENTS[UA_INDEX % len(USER_AGENTS)]
-    UA_INDEX += 1
-    return ua
-
-# ================= Logging ====================
 logger = logging.getLogger(__name__)
-
-# ==================== HTTP запросы ====================
-def make_request(url, headers=None, timeout=REQUEST_TIMEOUT, retries=MAX_RETRIES):
-    if headers is None:
-        headers = {'User-Agent': get_next_user_agent()}
-    proxies = {'http': PROXY, 'https': PROXY} if PROXY else None
-    for attempt in range(retries):
-        try:
-            r = requests.get(url, headers=headers, timeout=timeout, proxies=proxies)
-            r.raise_for_status()
-            return r
-        except requests.exceptions.Timeout:
-            logger.warning(f"Таймаут {attempt+1}/{retries} для {url}")
-        except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 403:
-                logger.warning(f"403 Forbidden: {url} – меняем User-Agent")
-                headers = {'User-Agent': get_next_user_agent()}
-            else:
-                logger.warning(f"HTTP ошибка {attempt+1}/{retries} для {url}: {e}")
-        except Exception as e:
-            logger.warning(f"Ошибка {attempt+1}/{retries} для {url}: {e}")
-        if attempt < retries - 1:
-            time.sleep(RETRY_DELAY * (attempt + 1))
-    return None
-
-# ==================== Helpers ====================
-def safe_select(element, selectors):
-    for sel in selectors:
-        elem = element.select_one(sel)
-        if elem:
-            return elem
-    return None
-
-def generate_item_id(item):
-    unique = f"{item['source']}_{item['url']}_{item['title']}"
-    return hashlib.md5(unique.encode('utf-8')).hexdigest()
 
 # ==================== Парсеры ====================
 
-# --- Mercari JP ---
 def parse_mercari_jp(keyword):
     items = []
-    url = f"https://jp.mercari.com/search?keyword={quote(keyword)}"
+    url = f"https://jp.mercari.com/search?keyword={encode_keyword(keyword)}"
     resp = make_request(url)
     if not resp:
         return items
@@ -82,7 +28,7 @@ def parse_mercari_jp(keyword):
             if img_url and img_url.startswith('//'):
                 img_url = 'https:' + img_url
             href = link.get('href')
-            full_url = urljoin('https://jp.mercari.com', href) if href else ''
+            full_url = make_full_url('https://jp.mercari.com', href)
             items.append({
                 'title': title.text.strip()[:100] if title else 'No title',
                 'price': price.text.strip()[:50] if price else 'Цена не указана',
@@ -90,14 +36,14 @@ def parse_mercari_jp(keyword):
                 'img_url': img_url,
                 'source': 'Mercari JP'
             })
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Ошибка парсинга карточки Mercari: {e}")
             continue
     return items
 
-# --- eBay ---
 def parse_ebay(keyword):
     items = []
-    url = f"https://www.ebay.com/sch/i.html?_nkw={quote(keyword)}&_sacat=11450&LH_ItemCondition=4"
+    url = f"https://www.ebay.com/sch/i.html?_nkw={encode_keyword(keyword)}&_sacat=11450&LH_ItemCondition=4"
     resp = make_request(url)
     if not resp:
         return items
@@ -124,14 +70,14 @@ def parse_ebay(keyword):
                 'img_url': img_url,
                 'source': 'eBay'
             })
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Ошибка парсинга карточки eBay: {e}")
             continue
     return items
 
-# --- 2nd Street JP ---
 def parse_2ndstreet_jp(keyword):
     items = []
-    url = f"https://www.2ndstreet.jp/search?keyword={quote(keyword)}"
+    url = f"https://www.2ndstreet.jp/search?keyword={encode_keyword(keyword)}"
     resp = make_request(url)
     if not resp:
         return items
@@ -149,7 +95,7 @@ def parse_2ndstreet_jp(keyword):
             if img_url and img_url.startswith('//'):
                 img_url = 'https:' + img_url
             href = link.get('href')
-            full_url = urljoin('https://www.2ndstreet.jp', href) if href else ''
+            full_url = make_full_url('https://www.2ndstreet.jp', href)
             items.append({
                 'title': title.text.strip()[:100] if title else 'No title',
                 'price': price.text.strip()[:50] if price else 'Цена не указана',
@@ -157,14 +103,14 @@ def parse_2ndstreet_jp(keyword):
                 'img_url': img_url,
                 'source': '2nd Street JP'
             })
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Ошибка парсинга 2ndStreet: {e}")
             continue
     return items
 
-# --- Rakuten Rakuma ---
 def parse_rakuma(keyword):
     items = []
-    url = f"https://fril.jp/s?query={quote(keyword)}"
+    url = f"https://fril.jp/s?query={encode_keyword(keyword)}"
     resp = make_request(url)
     if not resp:
         return items
@@ -182,7 +128,7 @@ def parse_rakuma(keyword):
             if img_url and img_url.startswith('//'):
                 img_url = 'https:' + img_url
             href = link.get('href')
-            full_url = urljoin('https://fril.jp', href) if href else ''
+            full_url = make_full_url('https://fril.jp', href)
             items.append({
                 'title': title.text.strip()[:100],
                 'price': price.text.strip()[:50] if price else 'Цена не указана',
@@ -190,14 +136,14 @@ def parse_rakuma(keyword):
                 'img_url': img_url,
                 'source': 'Rakuten Rakuma'
             })
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Ошибка парсинга Rakuma: {e}")
             continue
     return items
 
-# --- Yahoo Flea ---
 def parse_yahoo_flea(keyword):
     items = []
-    url = f"https://paypayfleamarket.yahoo.co.jp/search/{quote(keyword)}"
+    url = f"https://paypayfleamarket.yahoo.co.jp/search/{encode_keyword(keyword)}"
     resp = make_request(url)
     if not resp:
         return items
@@ -215,7 +161,7 @@ def parse_yahoo_flea(keyword):
             if img_url and img_url.startswith('//'):
                 img_url = 'https:' + img_url
             href = link.get('href') if link else ''
-            full_url = urljoin('https://paypayfleamarket.yahoo.co.jp', href) if href else ''
+            full_url = make_full_url('https://paypayfleamarket.yahoo.co.jp', href)
             items.append({
                 'title': title.text.strip()[:100],
                 'price': price.text.strip()[:50] if price else 'Цена не указана',
@@ -223,14 +169,14 @@ def parse_yahoo_flea(keyword):
                 'img_url': img_url,
                 'source': 'Yahoo Flea'
             })
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Ошибка парсинга Yahoo Flea: {e}")
             continue
     return items
 
-# --- Yahoo Auction ---
 def parse_yahoo_auction(keyword):
     items = []
-    url = f"https://auctions.yahoo.co.jp/search/search?p={quote(keyword)}&aq=-1&type=all"
+    url = f"https://auctions.yahoo.co.jp/search/search?p={encode_keyword(keyword)}&aq=-1&type=all"
     resp = make_request(url)
     if not resp:
         return items
@@ -248,7 +194,7 @@ def parse_yahoo_auction(keyword):
             if img_url and img_url.startswith('//'):
                 img_url = 'https:' + img_url
             href = link.get('href') if link else ''
-            full_url = urljoin('https://auctions.yahoo.co.jp', href) if href else ''
+            full_url = make_full_url('https://auctions.yahoo.co.jp', href)
             items.append({
                 'title': title.text.strip()[:100],
                 'price': price.text.strip()[:50] if price else 'Цена не указана',
@@ -256,14 +202,14 @@ def parse_yahoo_auction(keyword):
                 'img_url': img_url,
                 'source': 'Yahoo Auction'
             })
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Ошибка парсинга Yahoo Auction: {e}")
             continue
     return items
 
-# --- Yahoo Shopping ---
 def parse_yahoo_shopping(keyword):
     items = []
-    url = f"https://shopping.yahoo.co.jp/search?p={quote(keyword)}&used=1"
+    url = f"https://shopping.yahoo.co.jp/search?p={encode_keyword(keyword)}&used=1"
     resp = make_request(url)
     if not resp:
         return items
@@ -281,7 +227,7 @@ def parse_yahoo_shopping(keyword):
             if img_url and img_url.startswith('//'):
                 img_url = 'https:' + img_url
             href = link.get('href') if link else ''
-            full_url = urljoin('https://shopping.yahoo.co.jp', href) if href else ''
+            full_url = make_full_url('https://shopping.yahoo.co.jp', href)
             items.append({
                 'title': title.text.strip()[:100],
                 'price': price.text.strip()[:50] if price else 'Цена не указана',
@@ -289,18 +235,18 @@ def parse_yahoo_shopping(keyword):
                 'img_url': img_url,
                 'source': 'Yahoo Shopping'
             })
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Ошибка парсинга Yahoo Shopping: {e}")
             continue
     return items
 
-# --- Rakuten Mall ---
 def parse_rakuten_mall(keyword):
     items = []
-    url = f"https://search.rakuten.co.jp/search/mall/{quote(keyword)}/?used=1"
+    url = f"https://search.rakuten.co.jp/search/mall/{encode_keyword(keyword)}/?used=1"
     resp = make_request(url)
     if not resp:
         # альтернативный URL
-        alt_url = f"https://search.rakuten.co.jp/search/mall/?v=2&p={quote(keyword)}&used=1"
+        alt_url = f"https://search.rakuten.co.jp/search/mall/?v=2&p={encode_keyword(keyword)}&used=1"
         resp = make_request(alt_url)
         if not resp:
             return items
@@ -318,7 +264,7 @@ def parse_rakuten_mall(keyword):
             if img_url and img_url.startswith('//'):
                 img_url = 'https:' + img_url
             href = link.get('href') if link else ''
-            full_url = urljoin('https://search.rakuten.co.jp', href) if href else ''
+            full_url = make_full_url('https://search.rakuten.co.jp', href)
             items.append({
                 'title': title.text.strip()[:100],
                 'price': price.text.strip()[:50] if price else 'Цена не указана',
@@ -326,11 +272,11 @@ def parse_rakuten_mall(keyword):
                 'img_url': img_url,
                 'source': 'Rakuten Mall'
             })
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Ошибка парсинга Rakuten Mall: {e}")
             continue
     return items
 
-# ===== Словарь всех парсеров =====
 PARSERS = {
     'Mercari JP': parse_mercari_jp,
     'Rakuten Rakuma': parse_rakuma,

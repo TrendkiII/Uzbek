@@ -1,59 +1,51 @@
-import os
-import time
-from fake_useragent import UserAgent
-
-# ================== Telegram ==================
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8146716058:AAEUOcF2y0GPl4Le9LOkqtCUERhHzTsCbsc")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "945746201")
-
-# ================== Парсинг ==================
-REQUEST_TIMEOUT = 20          # Таймаут для HTTP запросов (сек)
-MAX_RETRIES = 3               # Кол-во повторных попыток
-RETRY_DELAY = 3               # Задержка между попытками (сек)
-ITEMS_PER_PAGE = 10           # Сколько элементов парсить с каждой страницы
-PARALLEL_THREADS = 4          # Кол-во потоков для фонового поиска
-LIVE_MODE_INTERVAL = 10       # Интервал между проверками в лайв режиме (сек)
-
-# ================== Прокси и User-Agent ==================
-PROXY = os.environ.get("PROXY_URL", None)
-ua = UserAgent()
-USER_AGENTS_POOL = [ua.random for _ in range(20)]
-UA_INDEX = 0
-
-def get_next_user_agent():
-    global UA_INDEX
-    ua = USER_AGENTS_POOL[UA_INDEX % len(USER_AGENTS_POOL)]
-    UA_INDEX += 1
-    return ua
-
-# ================== Пауза и состояния ==================
-BOT_STATE = {
-    "active": False,                 # Если True — фоновые проверки идут
-    "selected_brands": [],           # Выбранные бренды для поиска
-    "selected_platforms": [],        # Выбранные площадки
-    "last_items": [],                # Последние найденные элементы (для лайв режима)
-    "last_check": None               # Время последней проверки
-}
-
-# ================== Логи ==================
 import logging
+import time
+from threading import Lock
+import os
+from brands import ALL_PLATFORMS
+
+# ==================== Логирование ====================
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s"
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler()]
 )
 logger = logging.getLogger(__name__)
 
-# ================== URL шаблоны для поиска ==================
-SEARCH_URLS = {
-    'Mercari JP': 'https://jp.mercari.com/search?keyword={keyword}',
-    'Rakuten Rakuma': 'https://fril.jp/s?query={keyword}',
-    'Yahoo Flea': 'https://paypayfleamarket.yahoo.co.jp/search/{keyword}',
-    'Yahoo Auction': 'https://auctions.yahoo.co.jp/search/search?p={keyword}&aq=-1&auccat=&ei=utf-8&oq=&sc_i=&tab_ex=commerce&type=all',
-    'Yahoo Shopping': 'https://shopping.yahoo.co.jp/search?p={keyword}&ss_first=1&tab_ex=commerce&used=1',
-    'Rakuten Mall': 'https://search.rakuten.co.jp/search/mall/{keyword}/?used=1',
-    'eBay': 'https://www.ebay.com/sch/i.html?_nkw={keyword}&LH_ItemCondition=4&_sacat=11450',
-    '2nd Street JP': 'https://www.2ndstreet.jp/search?query={keyword}'
+# ==================== Блокировки ====================
+state_lock = Lock()          # для изменения состояния бота
+file_lock = Lock()            # для работы с файлом found_items.json
+
+# ==================== Время старта ====================
+BOT_START_TIME = time.time()
+
+# ==================== Состояние бота ====================
+BOT_STATE = {
+    "mode": "auto",                       # 'auto' или 'manual'
+    "selected_brands": [],                 # выбранные бренды
+    "selected_platforms": ALL_PLATFORMS.copy(),  # все по умолчанию
+    "last_check": None,                    # время последней проверки
+    "is_checking": False,                   # идёт ли проверка
+    "paused": False,                        # пауза
+    "shutdown": False,                       # флаг завершения
+    "interval": 30,                          # интервал в минутах
+    "stats": {
+        "total_checks": 0,
+        "total_finds": 0,
+        "platform_stats": {platform: {"checks": 0, "finds": 0} for platform in ALL_PLATFORMS}
+    },
+    "send_to_telegram": None                  # будет установлена из telegram_bot
 }
 
-# ================== Общие настройки ==================
-MAX_BATCH_SEND = 10       # Сколько элементов в одном пакете для Telegram альбома
+# ==================== Telegram ====================
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+
+# ==================== Общие настройки ====================
+REQUEST_TIMEOUT = 20
+MAX_RETRIES = 3
+RETRY_DELAY = 3
+ITEMS_PER_PAGE = 10
+MAX_WORKERS = 4
+PROXY = os.environ.get("PROXY_URL", None)
+FOUND_ITEMS_FILE = "found_items.json"

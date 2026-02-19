@@ -98,11 +98,9 @@ BRAND_GROUPS = [
     }
 ]
 
-# Быстрый доступ к основным именам брендов
 BRAND_MAIN_NAMES = [group["main"] for group in BRAND_GROUPS]
 POPULAR_BRANDS = BRAND_MAIN_NAMES[:10]
 
-# Список платформ и поддерживаемые языки для парсинга
 ALL_PLATFORMS = [
     'Mercari JP',
     'Rakuten Rakuma',
@@ -125,7 +123,6 @@ PLATFORM_LANGUAGES = {
     '2nd Street JP': ['jp', 'latin', 'universal'],
 }
 
-# Функции для работы с брендами
 def get_variations_for_platform(brand_main, platform):
     """
     Возвращает список всех вариаций бренда для конкретной платформы

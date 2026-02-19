@@ -1,7 +1,7 @@
-flask
 requests
 beautifulsoup4
-lxml
-aiogram
+flask
+schedule
 fake-useragent
+lxml
 python-dotenv
