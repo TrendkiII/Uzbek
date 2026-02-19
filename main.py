@@ -30,4 +30,5 @@ if __name__ == "__main__":
     # Запуск Flask
     port = int(os.environ.get("PORT", 8080))
     logger.info(f"🚀 Запуск Flask на 0.0.0.0:{port}")
+    logger.info(f"🌍 Healthcheck доступен по /health")
     app.run(host="0.0.0.0", port=port, threaded=True)
