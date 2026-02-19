@@ -931,7 +931,8 @@ def status():
 def run_scheduler():
     """Запускает планировщик с динамическим интервалом"""
     logger.info("Планировщик запущен")
-    last_run = 0
+    last_run = time.time()  # Считаем, что последний запуск был сейчас
+    first_run = True
 
     while not bot_state.get('shutdown', False):
         with state_lock:
@@ -942,6 +943,12 @@ def run_scheduler():
 
         # Если не на паузе и прошло достаточно времени
         if not paused and (current_time - last_run) >= interval:
+            if first_run:
+                first_run = False
+                logger.info("Первый запуск — пропускаем автоматическую проверку")
+                last_run = current_time
+                continue
+
             logger.info(f"Планировщик: запуск проверки (интервал {interval//60} мин)")
             Thread(target=check_all_marketplaces).start()
             last_run = current_time
