@@ -371,8 +371,26 @@ def webhook():
     return 'OK', 200
 
 # ==================== Обработчик обновлений ====================
+# ==================== Обработчик обновлений ====================
 def handle_update(update):
     try:
+        # Твой Telegram ID (узнай у @userinfobot)
+        YOUR_USER_ID = 945746201  # ЗАМЕНИ НА СВОЙ ID
+        
+        # Проверяем, откуда пришло обновление
+        if 'callback_query' in update:
+            user_id = update['callback_query']['from']['id']
+        elif 'message' in update:
+            user_id = update['message']['from']['id']
+        else:
+            return  # Непонятный тип обновления
+        
+        # Если пользователь не ты – игнорируем
+        if user_id != YOUR_USER_ID:
+            logger.warning(f"Заблокирован доступ для user_id: {user_id}")
+            return
+        
+        # Дальше идёт твой существующий код обработки
         if 'callback_query' in update:
             q = update['callback_query']
             data = q['data']
