@@ -27,6 +27,7 @@ def init_db():
                          brand_main TEXT,
                          found_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                          last_checked TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                         last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                          is_active INTEGER DEFAULT 1)''')
             
             # Создаём индекс для быстрого поиска по источнику и времени
@@ -41,6 +42,10 @@ def init_db():
             c.execute('''CREATE INDEX IF NOT EXISTS idx_active 
                          ON items(is_active)''')
             
+            # НОВЫЙ: составной индекс для ускорения статистики по брендам
+            c.execute('''CREATE INDEX IF NOT EXISTS idx_brand_active 
+                         ON items(brand_main, is_active)''')
+            
             conn.commit()
             logger.info(f"✅ База данных SQLite инициализирована: {DB_FILE}")
         except Exception as e:
@@ -49,41 +54,13 @@ def init_db():
             if conn:
                 conn.close()
 
-# ==================== Добавление товара ====================
-def add_item(item):
-    """
-    Добавляет товар в базу, если его там ещё нет.
-    Возвращает True если товар новый, False если уже был.
-    """
-    with db_lock:
-        conn = None
-        try:
-            conn = sqlite3.connect(DB_FILE)
-            c = conn.cursor()
-            
-            c.execute('''INSERT OR IGNORE INTO items 
-                        (id, title, price, url, img_url, source)
-                        VALUES (?, ?, ?, ?, ?, ?)''',
-                     (item['id'], 
-                      item['title'][:500],
-                      item['price'][:100],
-                      item['url'][:1000],
-                      item.get('img_url', '')[:500],
-                      item['source']))
-            
-            conn.commit()
-            return c.rowcount > 0
-        except Exception as e:
-            logger.error(f"❌ Ошибка добавления товара {item.get('id')}: {e}")
-            return False
-        finally:
-            if conn:
-                conn.close()
-
-# ==================== Добавление товара с брендом ====================
+# ==================== Добавление товара с брендом (УЛУЧШЕНО) ====================
 def add_item_with_brand(item, brand_main):
     """
-    Добавляет товар в базу с указанием основного бренда
+    Добавляет товар в базу с указанием основного бренда.
+    Если товар уже существует:
+        - обновляет last_seen, last_checked, price, title
+        - устанавливает is_active = 1 (даже если ранее был помечен как проданный)
     Возвращает True если товар новый, False если уже был.
     """
     with db_lock:
@@ -97,9 +74,10 @@ def add_item_with_brand(item, brand_main):
             existing = c.fetchone()
             
             if existing:
-                # Товар уже есть, обновляем время проверки и статус
+                # Товар уже есть – обновляем информацию и активируем
                 c.execute('''UPDATE items 
                             SET last_checked = CURRENT_TIMESTAMP,
+                                last_seen = CURRENT_TIMESTAMP,
                                 is_active = 1,
                                 price = ?,
                                 title = ?
@@ -110,8 +88,10 @@ def add_item_with_brand(item, brand_main):
             else:
                 # Новый товар
                 c.execute('''INSERT INTO items 
-                            (id, title, price, url, img_url, source, brand_main, is_active)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, 1)''',
+                            (id, title, price, url, img_url, source, brand_main, 
+                             found_at, last_checked, last_seen, is_active)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, 
+                                    CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1)''',
                          (item['id'], 
                           item['title'][:500],
                           item['price'][:100],
@@ -128,110 +108,12 @@ def add_item_with_brand(item, brand_main):
             if conn:
                 conn.close()
 
-# ==================== Массовое добавление ====================
-def add_items_bulk(items):
-    """
-    Добавляет несколько товаров за раз (быстрее, чем по одному)
-    Возвращает количество новых товаров
-    """
-    if not items:
-        return 0
-    
-    with db_lock:
-        conn = None
-        try:
-            conn = sqlite3.connect(DB_FILE)
-            c = conn.cursor()
-            
-            new_count = 0
-            for item in items:
-                c.execute('''INSERT OR IGNORE INTO items 
-                            (id, title, price, url, img_url, source)
-                            VALUES (?, ?, ?, ?, ?, ?)''',
-                         (item['id'], 
-                          item['title'][:500],
-                          item['price'][:100],
-                          item['url'][:1000],
-                          item.get('img_url', '')[:500],
-                          item['source']))
-                if c.rowcount > 0:
-                    new_count += 1
-            
-            conn.commit()
-            return new_count
-        except Exception as e:
-            logger.error(f"❌ Ошибка массового добавления: {e}")
-            return 0
-        finally:
-            if conn:
-                conn.close()
-
-# ==================== Получение всех товаров ====================
-def load_all_items(limit=None, offset=None):
-    """
-    Загружает все товары из базы
-    Можно указать limit и offset для пагинации
-    """
-    with db_lock:
-        conn = None
-        try:
-            conn = sqlite3.connect(DB_FILE)
-            conn.row_factory = sqlite3.Row
-            c = conn.cursor()
-            
-            query = "SELECT * FROM items ORDER BY found_at DESC"
-            params = []
-            
-            if limit:
-                query += " LIMIT ?"
-                params.append(limit)
-            if offset:
-                query += " OFFSET ?"
-                params.append(offset)
-            
-            c.execute(query, params)
-            rows = c.fetchall()
-            
-            return [dict(row) for row in rows]
-        except Exception as e:
-            logger.error(f"❌ Ошибка загрузки всех товаров: {e}")
-            return []
-        finally:
-            if conn:
-                conn.close()
-
-# ==================== Получение товаров по бренду ====================
-def get_items_by_brand(brand, limit=100):
-    """
-    Возвращает товары, в названии которых встречается бренд
-    """
-    with db_lock:
-        conn = None
-        try:
-            conn = sqlite3.connect(DB_FILE)
-            conn.row_factory = sqlite3.Row
-            c = conn.cursor()
-            
-            c.execute('''SELECT * FROM items 
-                        WHERE title LIKE ? COLLATE NOCASE
-                        ORDER BY found_at DESC
-                        LIMIT ?''',
-                     (f'%{brand}%', limit))
-            
-            rows = c.fetchall()
-            return [dict(row) for row in rows]
-        except Exception as e:
-            logger.error(f"❌ Ошибка поиска по бренду {brand}: {e}")
-            return []
-        finally:
-            if conn:
-                conn.close()
-
-# ==================== Получение товаров по основному бренду ====================
+# ==================== Получение товаров по основному бренду (УЛУЧШЕНО) ====================
 def get_items_by_brand_main(brand_main, limit=50, include_sold=False):
     """
-    Возвращает товары по основному бренду
-    include_sold=False - только активные (не проданные)
+    Возвращает товары по основному бренду.
+    Если include_sold=True – все товары (включая проданные), иначе только активные.
+    Сортировка: сначала по last_seen DESC (самые свежие), затем по found_at DESC.
     """
     with db_lock:
         conn = None
@@ -243,13 +125,13 @@ def get_items_by_brand_main(brand_main, limit=50, include_sold=False):
             if include_sold:
                 c.execute('''SELECT * FROM items 
                             WHERE brand_main = ?
-                            ORDER BY found_at DESC
+                            ORDER BY last_seen DESC, found_at DESC
                             LIMIT ?''',
                          (brand_main, limit))
             else:
                 c.execute('''SELECT * FROM items 
                             WHERE brand_main = ? AND is_active = 1
-                            ORDER BY found_at DESC
+                            ORDER BY last_seen DESC, found_at DESC
                             LIMIT ?''',
                          (brand_main, limit))
             
@@ -262,11 +144,12 @@ def get_items_by_brand_main(brand_main, limit=50, include_sold=False):
             if conn:
                 conn.close()
 
-# ==================== Получение статистики по брендам ====================
+# ==================== Получение статистики по брендам (УЛУЧШЕНО) ====================
 def get_brands_stats():
     """
     Возвращает статистику по каждому бренду:
-    сколько всего найдено, сколько активных
+    сколько всего найдено, сколько активных.
+    Использует составной индекс (brand_main, is_active) для скорости.
     """
     with db_lock:
         conn = None
@@ -280,13 +163,37 @@ def get_brands_stats():
                          FROM items 
                          WHERE brand_main IS NOT NULL
                          GROUP BY brand_main
-                         ORDER BY active DESC''')
+                         ORDER BY active DESC, total DESC''')
             
             rows = c.fetchall()
             return [{'brand': row[0], 'total': row[1], 'active': row[2]} for row in rows]
         except Exception as e:
             logger.error(f"❌ Ошибка получения статистики по брендам: {e}")
             return []
+        finally:
+            if conn:
+                conn.close()
+
+# ==================== Проверка и обновление статуса товара ====================
+def check_item_status(item_id, is_active):
+    """
+    Обновляет статус товара (продан/активен) и время последней проверки.
+    Возвращает True если статус изменился.
+    """
+    with db_lock:
+        conn = None
+        try:
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            c.execute('''UPDATE items 
+                        SET is_active = ?, last_checked = CURRENT_TIMESTAMP
+                        WHERE id = ?''',
+                     (1 if is_active else 0, item_id))
+            conn.commit()
+            return c.rowcount > 0
+        except Exception as e:
+            logger.error(f"❌ Ошибка обновления статуса {item_id}: {e}")
+            return False
         finally:
             if conn:
                 conn.close()
@@ -310,13 +217,6 @@ def get_all_brands_from_db():
             if conn:
                 conn.close()
 
-# ==================== Получение последних товаров ====================
-def get_recent_items(limit=50):
-    """
-    Возвращает последние добавленные товары
-    """
-    return load_all_items(limit=limit)
-
 # ==================== Проверка существования товара ====================
 def item_exists(item_id):
     """
@@ -336,35 +236,11 @@ def item_exists(item_id):
             if conn:
                 conn.close()
 
-# ==================== Проверка и обновление статуса товара ====================
-def check_item_status(item_id, is_active):
-    """
-    Обновляет статус товара (продан/активен)
-    Возвращает True если статус изменился
-    """
-    with db_lock:
-        conn = None
-        try:
-            conn = sqlite3.connect(DB_FILE)
-            c = conn.cursor()
-            c.execute('''UPDATE items 
-                        SET is_active = ?, last_checked = CURRENT_TIMESTAMP
-                        WHERE id = ?''',
-                     (1 if is_active else 0, item_id))
-            conn.commit()
-            return c.rowcount > 0
-        except Exception as e:
-            logger.error(f"❌ Ошибка обновления статуса {item_id}: {e}")
-            return False
-        finally:
-            if conn:
-                conn.close()
-
 # ==================== Автоматическая проверка проданных товаров ====================
 def check_sold_items(platform, items):
     """
     Проверяет список товаров и помечает как проданные те,
-    которые были в базе, но исчезли из поиска
+    которые были в базе, но исчезли из поиска.
     """
     with db_lock:
         conn = None
@@ -427,10 +303,10 @@ def delete_old_items(days=30):
             if conn:
                 conn.close()
 
-# ==================== Получение статистики ====================
+# ==================== Получение статистики по базе ====================
 def get_stats():
     """
-    Возвращает статистику по базе данных
+    Возвращает общую статистику по базе данных
     """
     with db_lock:
         conn = None
@@ -451,15 +327,20 @@ def get_stats():
             c.execute("SELECT MIN(found_at), MAX(found_at) FROM items")
             oldest, newest = c.fetchone()
             
+            # Количество активных
+            c.execute("SELECT COUNT(*) FROM items WHERE is_active = 1")
+            active = c.fetchone()[0]
+            
             return {
                 'total': total,
+                'active': active,
                 'by_source': by_source,
                 'oldest': oldest,
                 'newest': newest
             }
         except Exception as e:
             logger.error(f"❌ Ошибка получения статистики: {e}")
-            return {'total': 0, 'by_source': {}, 'oldest': None, 'newest': None}
+            return {'total': 0, 'active': 0, 'by_source': {}, 'oldest': None, 'newest': None}
         finally:
             if conn:
                 conn.close()

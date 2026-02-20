@@ -2,6 +2,8 @@ import logging
 import time
 from threading import Lock
 import os
+import threading  # добавлено для Event
+
 from brands import ALL_PLATFORMS
 
 # ==================== Логирование ====================
@@ -16,6 +18,9 @@ logger = logging.getLogger(__name__)
 state_lock = Lock()
 file_lock = Lock()
 proxy_lock = Lock()
+
+# ==================== Событие для остановки проверки (НОВОЕ) ====================
+stop_event = threading.Event()
 
 # ==================== Время старта ====================
 BOT_START_TIME = time.time()
@@ -38,7 +43,7 @@ BOT_STATE = {
     },
     "send_to_telegram": None,
     "awaiting_proxy": False,
-    "stop_requested": False,           # <-- новый флаг для остановки проверки
+    # stop_requested больше не нужен, используем stop_event
 }
 
 # ==================== Telegram ====================

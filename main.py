@@ -21,13 +21,15 @@ def setup_webhook():
         logger.error("❌ TELEGRAM_BOT_TOKEN не установлен!")
         return
 
+    # Получаем URL вебхука из переменных окружения или формируем автоматически
     webhook_url = os.environ.get("WEBHOOK_URL")
     if not webhook_url:
         railway_url = os.environ.get("RAILWAY_STATIC_URL")
         if railway_url:
             webhook_url = f"https://{railway_url}"
         else:
-            webhook_url = "https://uzbek-production.up.railway.app"
+            # Значение по умолчанию (можно задать через переменную DEFAULT_WEBHOOK_URL)
+            webhook_url = os.environ.get("DEFAULT_WEBHOOK_URL", "https://uzbek-production.up.railway.app")
             logger.warning(f"⚠️ WEBHOOK_URL не задан, использую {webhook_url}")
 
     try:

@@ -108,6 +108,9 @@ def check_and_update_proxies(proxy_list=None):
     if proxy_list is PROXY_POOL or proxy_list == PROXY_POOL:
         with proxy_lock:
             PROXY_POOL[:] = working
+            # Очищаем множество bad_proxies, так как пул обновлён
+            global bad_proxies
+            bad_proxies.clear()
             save_proxies_to_file(PROXY_POOL)
     
     return working
@@ -151,9 +154,37 @@ def get_proxy_stats():
             'requests_this_proxy': request_counter
         }
 
-# ================== Генерация ID ==================
+# ================== Асинхронное получение прокси (НОВОЕ) ==================
+async def get_next_proxy_async():
+    """Асинхронно возвращает следующий прокси из пула (с блокировкой)"""
+    with proxy_lock:
+        if not PROXY_POOL:
+            return None
+        global request_counter, current_proxy_index
+        available_proxies = [p for p in PROXY_POOL if p not in bad_proxies]
+        if not available_proxies:
+            logger.warning("⚠️ Нет доступных прокси для асинхронного запроса!")
+            return None
+        if request_counter >= REQUESTS_BEFORE_PROXY_CHANGE:
+            current_proxy_index = (current_proxy_index + 1) % len(available_proxies)
+            request_counter = 0
+        proxy_url = available_proxies[current_proxy_index]
+        request_counter += 1
+        return proxy_url  # возвращаем строку, а не словарь, для aiohttp
+
+# ================== Генерация ID (УЛУЧШЕНО) ==================
+def normalize_url(url):
+    """Убирает query-параметры из URL для устранения дубликатов"""
+    if not url:
+        return url
+    return url.split('?')[0]
+
 def generate_item_id(item):
-    unique = f"{item['source']}_{item['url']}_{item['title']}"
+    """Генерирует уникальный ID на основе источника, нормализованного URL и названия"""
+    source = item.get('source', '')
+    url = normalize_url(item.get('url', ''))
+    title = item.get('title', '')[:100]  # ограничим длину для хеша
+    unique = f"{source}_{url}_{title}"
     return hashlib.md5(unique.encode('utf-8')).hexdigest()
 
 # ================== CSS селектор ==================

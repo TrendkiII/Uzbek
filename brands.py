@@ -272,30 +272,44 @@ def expand_selected_brands_for_platforms(selected_brands, platforms):
         result[p] = list(dict.fromkeys(vars_list))
     return result
 
-# ==================== НОВАЯ ФУНКЦИЯ ====================
+# ==================== НОВАЯ ФУНКЦИЯ ДЛЯ ОПРЕДЕЛЕНИЯ БРЕНДА ИЗ НАЗВАНИЯ ТОВАРА ====================
+def detect_brand_from_title(title):
+    """
+    Определяет бренд по названию товара.
+    Ищет вхождения всех вариаций (на разных языках) в заголовок.
+    Возвращает основное имя бренда или None, если ничего не найдено.
+    """
+    if not title:
+        return None
+    
+    title_lower = title.lower()
+    
+    for group in BRAND_GROUPS:
+        # Проверяем все вариации бренда
+        for typ in ['latin', 'jp', 'cn', 'universal']:
+            if typ in group['variations']:
+                for var in group['variations'][typ]:
+                    if var.lower() in title_lower:
+                        return group["main"]
+        
+        # Запасной вариант – проверяем основное имя
+        if group["main"].lower() in title_lower:
+            return group["main"]
+    
+    return None
+
+# Старую функцию оставляем для обратной совместимости (если где-то используется)
 def get_main_brand_by_variation(variation):
     """
-    Возвращает основное имя бренда по его вариации
-    Например: get_main_brand_by_variation("ルグランブルー") вернёт "L.G.B."
-    
-    Если вариация не найдена, возвращает None
+    Устаревшая функция. Используйте detect_brand_from_title для названий товаров.
     """
     if not variation:
         return None
-    
     variation_lower = variation.lower().strip()
-    
-    # Сначала ищем точное совпадение
     for group in BRAND_GROUPS:
         for typ in ['latin', 'jp', 'cn', 'universal']:
             if typ in group['variations']:
                 for var in group['variations'][typ]:
                     if var.lower().strip() == variation_lower:
                         return group["main"]
-    
-    # Если точное не найдено, ищем частичное (вариация содержит основное имя)
-    for group in BRAND_GROUPS:
-        if group["main"].lower() in variation_lower:
-            return group["main"]
-    
     return None

@@ -1,26 +1,35 @@
 import json
 import time
-import requests
-from threading import Thread
-from flask import Flask, request
 import asyncio
-import aiohttp
+from threading import Thread
+
+import requests
+from flask import Flask, request
 
 from config import (
     BOT_STATE, state_lock, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID,
-    logger, ALL_PLATFORMS, PROXY_POOL
+    logger, ALL_PLATFORMS, PROXY_POOL, stop_event
 )
-from brands import BRAND_MAIN_NAMES, get_variations_for_platform, BRAND_GROUPS
-from parsers import PARSERS
+from brands import BRAND_MAIN_NAMES, get_variations_for_platform, BRAND_GROUPS, detect_brand_from_title
+from scheduler import run_search, check_all_marketplaces
 from utils import (
-    generate_item_id, test_proxy, add_proxy_to_pool,
-    check_and_update_proxies, get_proxy_stats
+    test_proxy, add_proxy_to_pool, check_and_update_proxies,
+    get_proxy_stats, init_proxy_pool
+)
+from database import (
+    get_items_by_brand_main, get_brands_stats, check_item_status,
+    get_stats, get_all_brands_from_db
 )
 
 app = Flask(__name__)
 
-# ==================== Функции отправки ====================
-def send_telegram_message(text, photo_url=None, keyboard=None, chat_id=None):
+# ==================== Константы ====================
+ALLOWED_USER_IDS = [int(id) for id in os.environ.get("ALLOWED_USER_IDS", "945746201,1600234834").split(",")]
+
+# ==================== Вспомогательные функции отправки ====================
+
+def send_telegram_message(text, photo_url=None, keyboard=None, chat_id=None, parse_mode='HTML'):
+    """Отправляет сообщение в Telegram с повторными попытками"""
     token = TELEGRAM_BOT_TOKEN
     if not token:
         logger.error("Нет TELEGRAM_BOT_TOKEN")
@@ -30,33 +39,32 @@ def send_telegram_message(text, photo_url=None, keyboard=None, chat_id=None):
         if not chat_id:
             logger.error("Нет chat_id")
             return False
-    try:
-        if photo_url:
-            url = f"https://api.telegram.org/bot{token}/sendPhoto"
-            payload = {
-                'chat_id': chat_id,
-                'photo': photo_url,
-                'caption': text,
-                'parse_mode': 'HTML'
-            }
-            if keyboard:
-                payload['reply_markup'] = json.dumps(keyboard)
-            requests.post(url, data=payload, timeout=10)
-        else:
-            url = f"https://api.telegram.org/bot{token}/sendMessage"
-            payload = {
-                'chat_id': chat_id,
-                'text': text,
-                'parse_mode': 'HTML',
-                'disable_web_page_preview': False
-            }
-            if keyboard:
-                payload['reply_markup'] = json.dumps(keyboard)
-            requests.post(url, data=payload, timeout=10)
-        return True
-    except Exception as e:
-        logger.error(f"Ошибка Telegram: {e}")
-        return False
+
+    url = f"https://api.telegram.org/bot{token}/"
+    method = 'sendPhoto' if photo_url else 'sendMessage'
+    payload = {
+        'chat_id': chat_id,
+        'parse_mode': parse_mode,
+        'disable_web_page_preview': False
+    }
+    if photo_url:
+        payload['photo'] = photo_url
+        payload['caption'] = text
+    else:
+        payload['text'] = text
+    if keyboard:
+        payload['reply_markup'] = json.dumps(keyboard)
+
+    for attempt in range(3):
+        try:
+            r = requests.post(url + method, data=payload, timeout=10)
+            if r.status_code == 200:
+                return True
+            logger.warning(f"Telegram API error {r.status_code}, attempt {attempt+1}")
+        except Exception as e:
+            logger.warning(f"Telegram send error: {e}, attempt {attempt+1}")
+        time.sleep(2)
+    return False
 
 def send_telegram_album(media_group, chat_id=None):
     token = TELEGRAM_BOT_TOKEN
@@ -68,10 +76,7 @@ def send_telegram_album(media_group, chat_id=None):
             logger.error("Нет chat_id")
             return False
     url = f"https://api.telegram.org/bot{token}/sendMediaGroup"
-    payload = {
-        'chat_id': chat_id,
-        'media': json.dumps(media_group)
-    }
+    payload = {'chat_id': chat_id, 'media': json.dumps(media_group)}
     try:
         requests.post(url, data=payload, timeout=15)
         return True
@@ -79,11 +84,34 @@ def send_telegram_album(media_group, chat_id=None):
         logger.error(f"Ошибка отправки альбома: {e}")
         return False
 
-# ==================== Функции меню ====================
+def answer_callback(callback_query_id, text=None):
+    """Отвечает на callback, чтобы убрать часики"""
+    if TELEGRAM_BOT_TOKEN:
+        requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/answerCallbackQuery",
+            json={'callback_query_id': callback_query_id, 'text': text}
+        )
 
-def send_main_menu(chat_id=None):
-    turbo_status = "🐱‍🏍 ТУРБО" if BOT_STATE.get('turbo_mode') else "🐢 Обычный"
-    
+# ==================== Меню (строители клавиатур) ====================
+
+def build_main_menu():
+    with state_lock:
+        turbo_status = "🐱‍🏍 ТУРБО" if BOT_STATE.get('turbo_mode') else "🐢 Обычный"
+        pause_status = "⏸ ПАУЗА" if BOT_STATE['paused'] else "▶️ АКТИВЕН"
+        platforms = ", ".join(BOT_STATE['selected_platforms']) if BOT_STATE['selected_platforms'] else "Нет"
+        brands_info = f"Выбрано: {len(BOT_STATE['selected_brands'])}" if BOT_STATE['selected_brands'] else "Бренды не выбраны"
+        msg = (
+            f"🤖 Мониторинг\n"
+            f"Режим: {BOT_STATE['mode']}\n"
+            f"Турбо: {'Вкл' if BOT_STATE.get('turbo_mode') else 'Выкл'}\n"
+            f"Статус: {pause_status}\n"
+            f"Площадки: {platforms}\n"
+            f"{brands_info}\n"
+            f"Прокси в пуле: {len(PROXY_POOL)}\n"
+            f"Проверок: {BOT_STATE['stats']['total_checks']}\n"
+            f"Найдено: {BOT_STATE['stats']['total_finds']}\n"
+            f"Последняя: {BOT_STATE['last_check'] or 'никогда'}"
+        )
     keyboard = {
         "inline_keyboard": [
             [{"text": "🚀 Обычный поиск", "callback_data": "start_check"}],
@@ -98,48 +126,31 @@ def send_main_menu(chat_id=None):
             [{"text": "📦 Мои находки", "callback_data": "myitems_menu"}],
             [{"text": "🔧 Управление прокси", "callback_data": "proxy_menu"}],
             [{"text": "⏹️ Остановить проверку", "callback_data": "stop_check"}],
-            [{"text": "⏸ Пауза / ▶️ Продолжить", "callback_data": "toggle_pause"}]
+            [{"text": "⏸ Пауза / ▶️ Продолжить", "callback_data": "toggle_pause"}
         ]
     }
-    
-    with state_lock:
-        platforms = ", ".join(BOT_STATE['selected_platforms']) if BOT_STATE['selected_platforms'] else "Нет"
-        brands_info = f"Выбрано: {len(BOT_STATE['selected_brands'])}" if BOT_STATE['selected_brands'] else "Бренды не выбраны"
-        pause_status = "⏸ ПАУЗА" if BOT_STATE['paused'] else "▶️ АКТИВЕН"
-        msg = (
-            f"🤖 Мониторинг\n"
-            f"Режим: {BOT_STATE['mode']}\n"
-            f"Турбо: {'Вкл' if BOT_STATE.get('turbo_mode') else 'Выкл'}\n"
-            f"Статус: {pause_status}\n"
-            f"Площадки: {platforms}\n"
-            f"{brands_info}\n"
-            f"Прокси в пуле: {len(PROXY_POOL)}\n"
-            f"Проверок: {BOT_STATE['stats']['total_checks']}\n"
-            f"Найдено: {BOT_STATE['stats']['total_finds']}\n"
-            f"Последняя: {BOT_STATE['last_check'] or 'никогда'}"
-        )
-    send_telegram_message(msg, keyboard=keyboard, chat_id=chat_id)
+    return msg, keyboard
 
-def send_mode_menu(chat_id=None):
-    keyboard = {
+def build_mode_menu():
+    return "⚙️ Выберите режим:", {
         "inline_keyboard": [
             [{"text": "🤖 Авто (все вариации)", "callback_data": "mode_auto"}],
             [{"text": "👆 Ручной (выбранные бренды)", "callback_data": "mode_manual"}],
             [{"text": "◀️ Назад", "callback_data": "main_menu"}]
         ]
     }
-    send_telegram_message("⚙️ Выберите режим:", keyboard=keyboard, chat_id=chat_id)
 
-def send_platforms_menu(chat_id=None):
+def build_platforms_menu():
     keyboard = {"inline_keyboard": []}
+    with state_lock:
+        selected = BOT_STATE['selected_platforms']
     for p in ALL_PLATFORMS:
-        with state_lock:
-            mark = "✅ " if p in BOT_STATE['selected_platforms'] else ""
+        mark = "✅ " if p in selected else ""
         keyboard["inline_keyboard"].append([{"text": f"{mark}{p}", "callback_data": f"toggle_platform_{p}"}])
     keyboard["inline_keyboard"].append([{"text": "◀️ Назад", "callback_data": "main_menu"}])
-    send_telegram_message("🌐 Выберите площадки:", keyboard=keyboard, chat_id=chat_id)
+    return "🌐 Выберите площадки:", keyboard
 
-def send_brands_list(page=0, chat_id=None):
+def build_brands_list(page=0):
     per_page = 8
     start = page * per_page
     end = start + per_page
@@ -148,52 +159,51 @@ def send_brands_list(page=0, chat_id=None):
     slice_names = BRAND_MAIN_NAMES[start:end]
 
     keyboard = {"inline_keyboard": []}
+    with state_lock:
+        selected_brands = BOT_STATE['selected_brands']
     for name in slice_names:
-        with state_lock:
-            mark = "✅ " if name in BOT_STATE['selected_brands'] else ""
+        mark = "✅ " if name in selected_brands else ""
         keyboard["inline_keyboard"].append([{"text": f"{mark}{name}", "callback_data": f"toggle_{name}"}])
 
     nav = []
     if page > 0:
-        nav.append({"text": "◀️", "callback_data": f"page_{page-1}"})
+        nav.append({"text": "◀️", "callback_data": f"brands_page_{page-1}"})
     nav.append({"text": f"{page+1}/{pages}", "callback_data": "noop"})
     if page < pages-1:
-        nav.append({"text": "▶️", "callback_data": f"page_{page+1}"})
-    keyboard["inline_keyboard"].append(nav)
+        nav.append({"text": "▶️", "callback_data": f"brands_page_{page+1}"})
+    if nav:
+        keyboard["inline_keyboard"].append(nav)
 
     actions = []
-    with state_lock:
-        if BOT_STATE['selected_brands']:
-            actions.append({"text": "❌ Очистить все", "callback_data": "clear_all"})
+    if selected_brands:
+        actions.append({"text": "❌ Очистить все", "callback_data": "clear_all_confirm"})
     actions.append({"text": "◀️ Назад", "callback_data": "main_menu"})
     keyboard["inline_keyboard"].append(actions)
 
+    # Подсчёт вариаций (для информации)
     var_count = 0
-    if BOT_STATE['selected_platforms']:
-        with state_lock:
-            if BOT_STATE['selected_brands']:
-                sample_platform = BOT_STATE['selected_platforms'][0]
-                vars_list = []
-                for brand in BOT_STATE['selected_brands']:
-                    vars_list.extend(get_variations_for_platform(brand, sample_platform))
-                var_count = len(set(vars_list))
-    msg = f"📋 Выбрано: {len(BOT_STATE['selected_brands'])} / вариаций: {var_count} (для первой площадки)"
-    send_telegram_message(msg, keyboard=keyboard, chat_id=chat_id)
+    with state_lock:
+        if BOT_STATE['selected_platforms'] and selected_brands:
+            sample_platform = BOT_STATE['selected_platforms'][0]
+            vars_list = []
+            for brand in selected_brands:
+                vars_list.extend(get_variations_for_platform(brand, sample_platform))
+            var_count = len(set(vars_list))
+    msg = f"📋 Выбрано: {len(selected_brands)} / вариаций: {var_count} (для первой площадки)"
+    return msg, keyboard
 
-def send_select_brands_menu(chat_id=None):
+def build_select_brands_menu():
     with state_lock:
         selected = len(BOT_STATE['selected_brands'])
-    keyboard = {
+    return f"🔄 Выбрано: {selected}", {
         "inline_keyboard": [
             [{"text": "📋 Выбрать из списка", "callback_data": "brands_list"}],
-            [{"text": "❌ Очистить все", "callback_data": "clear_all"}],
+            [{"text": "❌ Очистить все", "callback_data": "clear_all_confirm"}],
             [{"text": "◀️ Назад", "callback_data": "main_menu"}]
         ]
     }
-    msg = f"🔄 Выбрано: {selected}"
-    send_telegram_message(msg, keyboard=keyboard, chat_id=chat_id)
 
-def send_stats(chat_id=None):
+def build_stats():
     with state_lock:
         platform_stats = "\n".join([f"  {p}: {BOT_STATE['stats']['platform_stats'][p]['finds']} находок" for p in ALL_PLATFORMS])
         var_count = 0
@@ -216,13 +226,12 @@ def send_stats(chat_id=None):
             f"Прокси в пуле: {len(PROXY_POOL)}\n\n"
             f"Последняя проверка: {BOT_STATE['last_check'] or 'никогда'}"
         )
-    keyboard = {"inline_keyboard": [[{"text": "◀️ Назад", "callback_data": "main_menu"}]]}
-    send_telegram_message(msg, keyboard=keyboard, chat_id=chat_id)
+    return msg, {"inline_keyboard": [[{"text": "◀️ Назад", "callback_data": "main_menu"}]]}
 
-def send_interval_menu(chat_id=None):
+def build_interval_menu():
     with state_lock:
         current = BOT_STATE['interval']
-    keyboard = {
+    return f"⏱ Текущий интервал: {current} мин", {
         "inline_keyboard": [
             [{"text": "15 мин", "callback_data": "int_15"}, {"text": "30 мин", "callback_data": "int_30"}],
             [{"text": "1 час", "callback_data": "int_60"}, {"text": "3 часа", "callback_data": "int_180"}],
@@ -231,13 +240,11 @@ def send_interval_menu(chat_id=None):
             [{"text": "◀️ Назад", "callback_data": "main_menu"}]
         ]
     }
-    send_telegram_message(f"⏱ Текущий интервал: {current} мин", keyboard=keyboard, chat_id=chat_id)
 
-# ==================== Меню управления прокси ====================
-def send_proxy_menu(chat_id=None):
+def build_proxy_menu():
     with state_lock:
         proxy_count = len(PROXY_POOL)
-    keyboard = {
+    return f"🔧 Управление прокси\n\nВсего в пуле: {proxy_count}", {
         "inline_keyboard": [
             [{"text": "➕ Добавить прокси", "callback_data": "proxy_add"}],
             [{"text": "🔍 Проверить все", "callback_data": "proxy_check"}],
@@ -246,32 +253,20 @@ def send_proxy_menu(chat_id=None):
             [{"text": "◀️ Назад", "callback_data": "main_menu"}]
         ]
     }
-    msg = f"🔧 Управление прокси\n\nВсего в пуле: {proxy_count}"
-    send_telegram_message(msg, keyboard=keyboard, chat_id=chat_id)
 
-# ==================== Меню просмотра найденных товаров ====================
-def send_my_items_menu(chat_id=None):
-    """Главное меню для просмотра найденных товаров"""
-    keyboard = {
+def build_myitems_menu():
+    return "📦 Мои найденные товары\n\nВыберите действие:", {
         "inline_keyboard": [
             [{"text": "📦 По брендам", "callback_data": "myitems_brands"}],
             [{"text": "📊 Статистика по брендам", "callback_data": "myitems_stats"}],
             [{"text": "◀️ Назад", "callback_data": "main_menu"}]
         ]
     }
-    msg = "📦 Мои найденные товары\n\nВыберите действие:"
-    send_telegram_message(msg, keyboard=keyboard, chat_id=chat_id)
 
-def send_brands_list_for_items(page=0, chat_id=None):
-    """Показывает список брендов с количеством товаров"""
-    from database import get_brands_stats
-    
+def build_brands_list_for_items(page=0):
     stats = get_brands_stats()
     if not stats:
-        send_telegram_message("❌ В базе пока нет товаров", chat_id=chat_id)
-        send_my_items_menu(chat_id)
-        return
-    
+        return "❌ В базе пока нет товаров", {"inline_keyboard": [[{"text": "◀️ Назад", "callback_data": "myitems_menu"}]]}
     per_page = 8
     start = page * per_page
     end = start + per_page
@@ -299,20 +294,12 @@ def send_brands_list_for_items(page=0, chat_id=None):
 
     actions = [{"text": "◀️ Назад", "callback_data": "myitems_menu"}]
     keyboard["inline_keyboard"].append(actions)
+    return "📋 Выберите бренд для просмотра товаров:", keyboard
 
-    msg = "📋 Выберите бренд для просмотра товаров:"
-    send_telegram_message(msg, keyboard=keyboard, chat_id=chat_id)
-
-def send_items_by_brand(brand, page=0, chat_id=None):
-    """Показывает товары конкретного бренда"""
-    from database import get_items_by_brand_main
-    
-    items = get_items_by_brand_main(brand, limit=50, include_sold=False)
+def build_items_by_brand(brand, page=0, show_sold=False):
+    items = get_items_by_brand_main(brand, limit=50, include_sold=show_sold)
     if not items:
-        send_telegram_message(f"❌ Нет активных товаров для бренда {brand}", chat_id=chat_id)
-        send_brands_list_for_items(0, chat_id)
-        return
-    
+        return f"❌ Нет товаров для бренда {brand}", {"inline_keyboard": [[{"text": "◀️ Назад", "callback_data": "myitems_brands"}]]}
     per_page = 5
     start = page * per_page
     end = start + per_page
@@ -320,148 +307,366 @@ def send_items_by_brand(brand, page=0, chat_id=None):
     pages = (total + per_page - 1) // per_page
     slice_items = items[start:end]
 
-    msg = f"📦 <b>{brand}</b> - активные товары {start+1}-{min(end, total)} из {total}\n\n"
-    
+    msg = f"📦 <b>{brand}</b> - товары {start+1}-{min(end, total)} из {total}\n\n"
     for i, item in enumerate(slice_items, start+1):
-        msg += f"{i}. <a href='{item['url']}'>{item['title'][:50]}</a>\n"
-        msg += f"   💰 {item['price']} | 🏷 {item['source']}\n"
-        msg += f"   🔗 <a href='{item['url']}'>Ссылка</a>\n\n"
-    
+        status = "✅" if item['is_active'] else "💰 ПРОДАН"
+        msg += f"{i}. {status} <a href='{item['url']}'>{item['title'][:50]}</a>\n"
+        msg += f"   💰 {item['price']} | 🏷 {item['source']}\n\n"
+
     keyboard = {"inline_keyboard": []}
-    
     nav = []
     if page > 0:
-        nav.append({"text": "◀️", "callback_data": f"brandpage_{brand}_{page-1}"})
+        nav.append({"text": "◀️", "callback_data": f"brandpage_{brand}_{page-1}_{int(show_sold)}"})
     nav.append({"text": f"{page+1}/{pages}", "callback_data": "noop"})
     if page < pages-1:
-        nav.append({"text": "▶️", "callback_data": f"brandpage_{brand}_{page+1}"})
+        nav.append({"text": "▶️", "callback_data": f"brandpage_{brand}_{page+1}_{int(show_sold)}"})
     if nav:
         keyboard["inline_keyboard"].append(nav)
-    
+
+    toggle_text = "🔄 Показать все" if not show_sold else "✅ Только активные"
+    toggle_data = f"brandpage_{brand}_0_{0 if show_sold else 1}"
     actions = [
+        [{"text": toggle_text, "callback_data": toggle_data}],
         [{"text": "🔄 Проверить проданные", "callback_data": f"checksold_{brand}"}],
         [{"text": "📋 Все бренды", "callback_data": "myitems_brands"}],
         [{"text": "◀️ Главное меню", "callback_data": "main_menu"}]
     ]
     keyboard["inline_keyboard"].extend(actions)
-    
-    send_telegram_message(msg, keyboard=keyboard, chat_id=chat_id)
+    return msg, keyboard
 
-def send_brands_stats(chat_id=None):
-    """Показывает статистику по всем брендам"""
-    from database import get_brands_stats
-    
+def build_brands_stats():
     stats = get_brands_stats()
     if not stats:
-        send_telegram_message("❌ В базе пока нет товаров", chat_id=chat_id)
-        send_my_items_menu(chat_id)
-        return
-    
+        return "❌ В базе пока нет товаров", {"inline_keyboard": [[{"text": "◀️ Назад", "callback_data": "myitems_menu"}]]}
     msg = "📊 <b>Статистика по брендам</b>\n\n"
     total_all = 0
     active_all = 0
-    
     for stat in stats:
         active = stat['active'] or 0
         total_items = stat['total']
         total_all += total_items
         active_all += active
         msg += f"• <b>{stat['brand']}</b>: {active}/{total_items} активных\n"
-    
     msg += f"\n<b>Всего:</b> {active_all}/{total_all} товаров"
-    
-    keyboard = {
+    return msg, {
         "inline_keyboard": [
             [{"text": "📋 По брендам", "callback_data": "myitems_brands"}],
             [{"text": "◀️ Назад", "callback_data": "myitems_menu"}]
         ]
     }
-    send_telegram_message(msg, keyboard=keyboard, chat_id=chat_id)
 
-# ==================== АСИНХРОННЫЕ ФУНКЦИИ ДЛЯ ПРОВЕРКИ ПРОКСИ ====================
-async def check_proxy_async(session, proxy, semaphore):
-    """Проверяет один прокси асинхронно с ограничением параллельных запросов"""
-    async with semaphore:
-        try:
-            if proxy.startswith(('http://', 'https://', 'socks5://')):
-                proxy_url = proxy
-                display_proxy = proxy
-            else:
-                proxy_url = f'http://{proxy}'
-                display_proxy = proxy
-            
-            start = time.time()
-            async with session.get('http://httpbin.org/ip', 
-                                  proxy=proxy_url, 
-                                  timeout=5) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    elapsed = time.time() - start
-                    return proxy, True, data.get('origin'), round(elapsed, 2)
-        except Exception:
-            pass
-    return proxy, False, None, None
+# ==================== Обработчики callback'ов (диспетчер) ====================
 
-async def async_send_message(chat_id, text):
-    """Обёртка для отправки сообщения из асинхронного кода"""
-    loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, send_telegram_message, text, None, None, chat_id)
+def handle_callback_main_menu(callback, chat_id):
+    msg, kb = build_main_menu()
+    send_telegram_message(msg, keyboard=kb, chat_id=chat_id)
 
-async def process_proxy_batch(batch, chat_id, batch_num, total_batches):
-    """Обрабатывает один батч прокси"""
-    working = []
-    conn = aiohttp.TCPConnector(limit=50, limit_per_host=10, ttl_dns_cache=300)
-    timeout = aiohttp.ClientTimeout(total=5)
-    semaphore = asyncio.Semaphore(50)
-    
-    await async_send_message(chat_id, f"📦 Проверяю батч {batch_num}/{total_batches} ({len(batch)} прокси)...")
-    
-    async with aiohttp.ClientSession(connector=conn, timeout=timeout) as session:
-        tasks = []
-        for proxy in batch:
-            task = check_proxy_async(session, proxy, semaphore)
-            tasks.append(task)
-        
-        for i, task in enumerate(asyncio.as_completed(tasks), 1):
-            proxy, ok, ip, speed = await task
-            if ok:
-                working.append(proxy)
-                await async_send_message(chat_id, f"✅ {i}/{len(batch)}: {proxy} работает (IP: {ip}, {speed}с)")
-                add_proxy_to_pool(proxy)
-            else:
-                await async_send_message(chat_id, f"❌ {i}/{len(batch)}: {proxy} не работает")
-    
-    return working
+def handle_callback_mode_menu(callback, chat_id):
+    msg, kb = build_mode_menu()
+    send_telegram_message(msg, keyboard=kb, chat_id=chat_id)
 
-async def async_check_proxies(proxies, chat_id):
-    """Главная асинхронная функция проверки прокси"""
-    start_time = time.time()
-    
-    await async_send_message(chat_id, 
-        f"🔄 Начинаю асинхронную проверку {len(proxies)} прокси...\n"
-        f"⚡ Результаты будут появляться по мере проверки."
+def handle_callback_platforms_menu(callback, chat_id):
+    msg, kb = build_platforms_menu()
+    send_telegram_message(msg, keyboard=kb, chat_id=chat_id)
+
+def handle_callback_toggle_turbo(callback, chat_id):
+    with state_lock:
+        BOT_STATE['turbo_mode'] = not BOT_STATE['turbo_mode']
+        mode = "🐱‍🏍 ТУРБО" if BOT_STATE['turbo_mode'] else "🐢 Обычный"
+    send_telegram_message(f"⚡ Режим изменён: {mode}", chat_id=chat_id)
+    handle_callback_main_menu(callback, chat_id)
+
+def handle_callback_stats(callback, chat_id):
+    msg, kb = build_stats()
+    send_telegram_message(msg, keyboard=kb, chat_id=chat_id)
+
+def handle_callback_brands_list(callback, chat_id):
+    # page хранится в callback data, но для первого вызова page=0
+    data = callback['data']
+    if data == 'brands_list':
+        page = 0
+    else:
+        # формат: brands_page_X
+        page = int(data.split('_')[-1])
+    msg, kb = build_brands_list(page)
+    send_telegram_message(msg, keyboard=kb, chat_id=chat_id)
+
+def handle_callback_select_brands_menu(callback, chat_id):
+    msg, kb = build_select_brands_menu()
+    send_telegram_message(msg, keyboard=kb, chat_id=chat_id)
+
+def handle_callback_interval(callback, chat_id):
+    msg, kb = build_interval_menu()
+    send_telegram_message(msg, keyboard=kb, chat_id=chat_id)
+
+def handle_callback_toggle_pause(callback, chat_id):
+    with state_lock:
+        BOT_STATE['paused'] = not BOT_STATE['paused']
+        status = "⏸ ПАУЗА" if BOT_STATE['paused'] else "▶️ АКТИВЕН"
+    send_telegram_message(f"Статус изменён: {status}", chat_id=chat_id)
+    handle_callback_main_menu(callback, chat_id)
+
+def handle_callback_mode_auto(callback, chat_id):
+    with state_lock:
+        BOT_STATE['mode'] = 'auto'
+    send_telegram_message("✅ Режим: автоматический", chat_id=chat_id)
+    handle_callback_main_menu(callback, chat_id)
+
+def handle_callback_mode_manual(callback, chat_id):
+    with state_lock:
+        if BOT_STATE['selected_brands']:
+            BOT_STATE['mode'] = 'manual'
+            send_telegram_message(f"✅ Режим: ручной ({len(BOT_STATE['selected_brands'])} брендов)", chat_id=chat_id)
+        else:
+            send_telegram_message("⚠️ Сначала выберите бренды!", chat_id=chat_id)
+    handle_callback_main_menu(callback, chat_id)
+
+def handle_callback_toggle_platform(callback, chat_id):
+    platform = callback['data'].replace('toggle_platform_', '')
+    with state_lock:
+        if platform in BOT_STATE['selected_platforms']:
+            BOT_STATE['selected_platforms'].remove(platform)
+        else:
+            BOT_STATE['selected_platforms'].append(platform)
+        # не меняем режим автоматически, пусть пользователь сам выбирает
+    msg, kb = build_platforms_menu()
+    # редактируем предыдущее сообщение (упрощённо – отправляем новое)
+    send_telegram_message(msg, keyboard=kb, chat_id=chat_id)
+
+def handle_callback_toggle_brand(callback, chat_id):
+    brand = callback['data'][7:]  # убираем 'toggle_'
+    with state_lock:
+        if brand in BOT_STATE['selected_brands']:
+            BOT_STATE['selected_brands'].remove(brand)
+            notification = f"❌ {brand} убран"
+        else:
+            BOT_STATE['selected_brands'].append(brand)
+            notification = f"✅ {brand} добавлен"
+        # Автоматически переключаем режим на manual, если есть бренды
+        if BOT_STATE['selected_brands']:
+            BOT_STATE['mode'] = 'manual'
+        else:
+            BOT_STATE['mode'] = 'auto'
+    send_telegram_message(notification, chat_id=chat_id)
+    # Возвращаемся на страницу списка брендов (с текущей страницей, но проще page 0)
+    msg, kb = build_brands_list(0)
+    send_telegram_message(msg, keyboard=kb, chat_id=chat_id)
+
+def handle_callback_clear_all_confirm(callback, chat_id):
+    # Запрашиваем подтверждение
+    keyboard = {
+        "inline_keyboard": [
+            [{"text": "✅ Да, очистить", "callback_data": "clear_all_yes"}],
+            [{"text": "❌ Нет", "callback_data": "brands_list"}]
+        ]
+    }
+    send_telegram_message("⚠️ Вы уверены, что хотите очистить список выбранных брендов?", keyboard=keyboard, chat_id=chat_id)
+
+def handle_callback_clear_all_yes(callback, chat_id):
+    with state_lock:
+        BOT_STATE['selected_brands'] = []
+        BOT_STATE['mode'] = 'auto'
+    send_telegram_message("🗑 Список брендов очищен", chat_id=chat_id)
+    handle_callback_main_menu(callback, chat_id)
+
+def handle_callback_int(callback, chat_id):
+    new_interval = int(callback['data'].split('_')[1])
+    with state_lock:
+        BOT_STATE['interval'] = new_interval
+    send_telegram_message(f"✅ Интервал установлен: {new_interval} мин", chat_id=chat_id)
+    handle_callback_main_menu(callback, chat_id)
+
+def handle_callback_start_check(callback, chat_id):
+    if BOT_STATE['is_checking']:
+        send_telegram_message("⚠️ Проверка уже выполняется", chat_id=chat_id)
+    else:
+        send_telegram_message("⏳ Запускаю обычный поиск...", chat_id=chat_id)
+        Thread(target=check_all_marketplaces, args=(chat_id,)).start()
+
+def handle_callback_start_super_turbo(callback, chat_id):
+    if BOT_STATE['is_checking']:
+        send_telegram_message("⚠️ Проверка уже выполняется", chat_id=chat_id)
+        return
+    with state_lock:
+        mode = BOT_STATE['mode']
+        selected_brands = BOT_STATE['selected_brands'].copy()
+        platforms = BOT_STATE['selected_platforms'].copy()
+    if mode == 'auto':
+        # Все вариации из всех групп
+        all_vars = []
+        for group in BRAND_GROUPS:
+            for typ in ['latin', 'jp', 'cn', 'universal']:
+                if typ in group['variations']:
+                    all_vars.extend(group['variations'][typ])
+        keywords = list(set(all_vars))[:50]  # ограничим
+    else:
+        if not selected_brands:
+            send_telegram_message("⚠️ В ручном режиме нужно выбрать бренды!", chat_id=chat_id)
+            return
+        # Берём вариации для первой выбранной площадки (или для всех? лучше для всех, но тогда много ключей)
+        # Для простоты – для первой площадки
+        if not platforms:
+            send_telegram_message("⚠️ Не выбраны площадки!", chat_id=chat_id)
+            return
+        sample_platform = platforms[0]
+        keywords = []
+        for brand in selected_brands:
+            keywords.extend(get_variations_for_platform(brand, sample_platform))
+        keywords = list(set(keywords))
+    if not keywords:
+        send_telegram_message("⚠️ Нет ключевых слов для поиска", chat_id=chat_id)
+        return
+    send_telegram_message(f"⚡ Запускаю супер-турбо поиск по {len(keywords)} ключам...", chat_id=chat_id)
+    Thread(target=run_search, args=(keywords, platforms, chat_id, 30)).start()
+
+def handle_callback_stop_check(callback, chat_id):
+    stop_event.set()
+    send_telegram_message("⏹️ Сигнал остановки отправлен. Проверка будет прервана после текущих запросов.", chat_id=chat_id)
+
+def handle_callback_proxy_menu(callback, chat_id):
+    msg, kb = build_proxy_menu()
+    send_telegram_message(msg, keyboard=kb, chat_id=chat_id)
+
+def handle_callback_proxy_add(callback, chat_id):
+    send_telegram_message(
+        "📝 Отправьте список прокси (каждый с новой строки).\n"
+        "Формат: protocol://ip:port (например, http://123.45.67.89:8080 или socks5://...)",
+        chat_id=chat_id
     )
-    
-    batch_size = 50
-    all_working = []
-    total_batches = (len(proxies) + batch_size - 1) // batch_size
-    
-    for i in range(0, len(proxies), batch_size):
-        batch = proxies[i:i+batch_size]
-        batch_num = i//batch_size + 1
-        working = await process_proxy_batch(batch, chat_id, batch_num, total_batches)
-        all_working.extend(working)
-    
-    elapsed = time.time() - start_time
-    await async_send_message(chat_id, 
-        f"🎉 Асинхронная проверка завершена за {elapsed:.1f}с!\n"
-        f"✅ Рабочих прокси: {len(all_working)}/{len(proxies)}\n"
-        f"📊 Процент успеха: {len(all_working)/len(proxies)*100:.1f}%"
-    )
-    send_proxy_menu(chat_id)
+    with state_lock:
+        BOT_STATE['awaiting_proxy'] = True
+
+def handle_callback_proxy_check(callback, chat_id):
+    send_telegram_message("🔄 Проверка прокси...", chat_id=chat_id)
+    Thread(target=check_all_proxies, args=(chat_id,)).start()
+
+def handle_callback_proxy_stats(callback, chat_id):
+    stats = get_proxy_stats()
+    msg = (f"📊 Статистика прокси:\n"
+           f"Всего в пуле: {stats['total']}\n"
+           f"Рабочих: {stats['good']}\n"
+           f"Нерабочих: {stats['bad']}\n"
+           f"Текущий индекс: {stats['current_index']}\n"
+           f"Запросов на этом прокси: {stats['requests_this_proxy']}")
+    send_telegram_message(msg, chat_id=chat_id)
+    handle_callback_proxy_menu(callback, chat_id)
+
+def handle_callback_proxy_clean(callback, chat_id):
+    send_telegram_message("🧹 Очистка нерабочих прокси...", chat_id=chat_id)
+    Thread(target=clean_proxies, args=(chat_id,)).start()
+
+def handle_callback_myitems_menu(callback, chat_id):
+    msg, kb = build_myitems_menu()
+    send_telegram_message(msg, keyboard=kb, chat_id=chat_id)
+
+def handle_callback_myitems_brands(callback, chat_id):
+    # извлекаем страницу из callback, если есть
+    data = callback['data']
+    if data == 'myitems_brands':
+        page = 0
+    else:
+        # формат: itembrands_page_X
+        page = int(data.split('_')[-1])
+    msg, kb = build_brands_list_for_items(page)
+    send_telegram_message(msg, keyboard=kb, chat_id=chat_id)
+
+def handle_callback_myitems_stats(callback, chat_id):
+    msg, kb = build_brands_stats()
+    send_telegram_message(msg, keyboard=kb, chat_id=chat_id)
+
+def handle_callback_showbrand(callback, chat_id):
+    brand = callback['data'][10:]  # убираем 'showbrand_'
+    msg, kb = build_items_by_brand(brand, 0, show_sold=False)
+    send_telegram_message(msg, keyboard=kb, chat_id=chat_id)
+
+def handle_callback_brandpage(callback, chat_id):
+    # формат: brandpage_{brand}_{page}_{show_sold}
+    parts = callback['data'].split('_')
+    brand = '_'.join(parts[1:-2])
+    page = int(parts[-2])
+    show_sold = bool(int(parts[-1]))
+    msg, kb = build_items_by_brand(brand, page, show_sold)
+    send_telegram_message(msg, keyboard=kb, chat_id=chat_id)
+
+def handle_callback_checksold(callback, chat_id):
+    brand = callback['data'][10:]  # убираем 'checksold_'
+    send_telegram_message(f"🔄 Проверяю товары бренда {brand} на статус 'продан'...", chat_id=chat_id)
+    Thread(target=check_sold_for_brand, args=(brand, chat_id)).start()
+
+def handle_callback_noop(callback, chat_id):
+    # ничего не делаем
+    pass
+
+# Диспетчер callback'ов
+CALLBACK_HANDLERS = {
+    'main_menu': handle_callback_main_menu,
+    'mode_menu': handle_callback_mode_menu,
+    'platforms_menu': handle_callback_platforms_menu,
+    'toggle_turbo': handle_callback_toggle_turbo,
+    'stats': handle_callback_stats,
+    'brands_list': handle_callback_brands_list,
+    'select_brands_menu': handle_callback_select_brands_menu,
+    'interval': handle_callback_interval,
+    'toggle_pause': handle_callback_toggle_pause,
+    'mode_auto': handle_callback_mode_auto,
+    'mode_manual': handle_callback_mode_manual,
+    'start_check': handle_callback_start_check,
+    'start_super_turbo': handle_callback_start_super_turbo,
+    'stop_check': handle_callback_stop_check,
+    'proxy_menu': handle_callback_proxy_menu,
+    'proxy_add': handle_callback_proxy_add,
+    'proxy_check': handle_callback_proxy_check,
+    'proxy_stats': handle_callback_proxy_stats,
+    'proxy_clean': handle_callback_proxy_clean,
+    'myitems_menu': handle_callback_myitems_menu,
+    'myitems_brands': handle_callback_myitems_brands,
+    'myitems_stats': handle_callback_myitems_stats,
+    'clear_all_confirm': handle_callback_clear_all_confirm,
+    'clear_all_yes': handle_callback_clear_all_yes,
+    'noop': handle_callback_noop,
+}
+
+# Для обработчиков с префиксами (toggle_platform_, toggle_, int_, brands_page_, itembrands_page_, showbrand_, brandpage_, checksold_)
+PREFIX_HANDLERS = {
+    'toggle_platform_': handle_callback_toggle_platform,
+    'toggle_': handle_callback_toggle_brand,
+    'int_': handle_callback_int,
+    'brands_page_': handle_callback_brands_list,
+    'itembrands_page_': handle_callback_myitems_brands,
+    'showbrand_': handle_callback_showbrand,
+    'brandpage_': handle_callback_brandpage,
+    'checksold_': handle_callback_checksold,
+}
+
+# ==================== Обработчик сообщений ====================
+
+def handle_message(update):
+    chat_id = update['message']['chat']['id']
+    text = update['message'].get('text', '')
+
+    with state_lock:
+        awaiting = BOT_STATE.get('awaiting_proxy', False)
+
+    if awaiting:
+        with state_lock:
+            BOT_STATE['awaiting_proxy'] = False
+        lines = text.strip().split('\n')
+        proxies = [line.strip() for line in lines if line.strip()]
+        if not proxies:
+            send_telegram_message("❌ Список пуст. Попробуйте снова.", chat_id=chat_id)
+        else:
+            send_telegram_message(f"🔍 Проверяю {len(proxies)} прокси...", chat_id=chat_id)
+            Thread(target=add_proxies_from_list, args=(proxies, chat_id)).start()
+        return
+
+    if text == '/start':
+        handle_callback_main_menu(None, chat_id)
+    else:
+        send_telegram_message("❌ Неизвестная команда. Используйте /start", chat_id=chat_id)
+
+# ==================== Функции для работы с прокси (асинхронные) ====================
 
 def add_proxies_from_list(proxies, chat_id):
-    """Запускает асинхронную проверку прокси в отдельном потоке"""
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
@@ -469,32 +674,42 @@ def add_proxies_from_list(proxies, chat_id):
     finally:
         loop.close()
 
+async def async_check_proxies(proxies, chat_id):
+    # упрощённая версия (можно использовать код из старого файла)
+    from utils import test_proxy
+    working = []
+    for i, proxy in enumerate(proxies, 1):
+        send_telegram_message(f"⏳ Проверка {i}/{len(proxies)}: {proxy}", chat_id=chat_id)
+        ok = await asyncio.get_event_loop().run_in_executor(None, lambda: test_proxy(proxy)[1])
+        if ok:
+            working.append(proxy)
+            add_proxy_to_pool(proxy)
+            send_telegram_message(f"✅ {proxy} работает", chat_id=chat_id)
+        else:
+            send_telegram_message(f"❌ {proxy} не работает", chat_id=chat_id)
+    send_telegram_message(f"✅ Проверено. Рабочих: {len(working)}/{len(proxies)}", chat_id=chat_id)
+    send_proxy_menu(chat_id)  # импортируем? пока просто вызовем меню
+
 def check_all_proxies(chat_id):
-    """Проверяет все прокси в текущем пуле"""
-    with state_lock:
-        proxies = PROXY_POOL.copy()
-    if not proxies:
-        send_telegram_message("❌ Пул прокси пуст", chat_id=chat_id)
-        send_proxy_menu(chat_id)
-        return
-    send_telegram_message(f"🔄 Начинаю проверку всех {len(proxies)} прокси в пуле...", chat_id=chat_id)
     working = check_and_update_proxies()
     send_telegram_message(f"✅ Проверка завершена. Рабочих прокси: {len(working)}", chat_id=chat_id)
     send_proxy_menu(chat_id)
 
 def clean_proxies(chat_id):
-    """Удаляет нерабочие прокси"""
     send_telegram_message("🧹 Очистка нерабочих прокси...", chat_id=chat_id)
     working = check_and_update_proxies()
     send_telegram_message(f"✅ Осталось рабочих прокси: {len(working)}", chat_id=chat_id)
     send_proxy_menu(chat_id)
 
-# ==================== Функции для проверки проданных товаров ====================
+def send_proxy_menu(chat_id):
+    msg, kb = build_proxy_menu()
+    send_telegram_message(msg, keyboard=kb, chat_id=chat_id)
+
+# ==================== Проверка проданных для бренда ====================
+
 def check_sold_for_brand(brand, chat_id):
-    """Проверяет товары конкретного бренда на статус 'продан'"""
     from database import get_items_by_brand_main, check_item_status
-    from parsers import PARSERS
-    import requests
+    from utils import make_request
     from bs4 import BeautifulSoup
 
     items = get_items_by_brand_main(brand, limit=100, include_sold=False)
@@ -511,60 +726,45 @@ def check_sold_for_brand(brand, chat_id):
 
     for i, item in enumerate(items, 1):
         try:
-            # Отправляем сообщение о прогрессе каждые 10 товаров
             if i % 10 == 0:
                 send_telegram_message(f"⏳ Проверено {i}/{len(items)}...", chat_id=chat_id)
 
-            # Получаем страницу товара
-            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-            response = requests.get(item['url'], headers=headers, timeout=10)
-
-            if response.status_code != 200:
+            resp = make_request(item['url'])
+            if not resp:
                 error_count += 1
                 continue
 
-            soup = BeautifulSoup(response.text, 'lxml')
+            soup = BeautifulSoup(resp.text, 'lxml')
             is_sold = False
 
-            # Проверяем разные индикаторы "продано" в зависимости от площадки
+            # Логика определения проданности (как в старом коде)
             if item['source'] == 'Mercari JP':
-                # Mercari: ищем кнопку "売り切れ" (sold out) или "この商品は販売終了です"
                 sold_indicators = soup.select('[class*="sold"], [class*="SOLD"], .item-sold, .sold-out')
-                if sold_indicators or "売り切れ" in response.text:
+                if sold_indicators or "売り切れ" in resp.text:
                     is_sold = True
-
             elif item['source'] == 'eBay':
-                # eBay: ищем "This item is out of stock" или кнопка "See other items"
-                if "This item is out of stock" in response.text or "Sold" in response.text:
+                if "This item is out of stock" in resp.text or "Sold" in resp.text:
                     is_sold = True
-
             elif item['source'] == 'Yahoo Auction':
-                # Yahoo Auction: ищем "終了" (ended) или "この商品は終了しました"
-                if "終了" in response.text or "ended" in response.text.lower():
+                if "終了" in resp.text or "ended" in resp.text.lower():
                     is_sold = True
-
             elif '2nd Street' in item['source']:
-                # 2nd Street: ищем "SOLD OUT" или "売り切れ"
-                if "SOLD OUT" in response.text or "売り切れ" in response.text:
+                if "SOLD OUT" in resp.text or "売り切れ" in resp.text:
                     is_sold = True
+            # можно добавить другие площадки
 
-            # Если товар продан, помечаем в базе
             if is_sold:
                 check_item_status(item['id'], False)
                 sold_count += 1
-                logger.info(f"💰 Товар продан: {item['title'][:50]} - {item['url']}")
             else:
-                # Если товар активен, обновляем время проверки
                 check_item_status(item['id'], True)
                 active_count += 1
 
-            time.sleep(0.5)  # задержка между запросами
-
+            time.sleep(0.5)
         except Exception as e:
             logger.error(f"❌ Ошибка при проверке товара {item.get('id')}: {e}")
             error_count += 1
 
-    # Отправляем итоговое сообщение
     msg = (
         f"📊 Результаты проверки бренда {brand}:\n"
         f"✅ Активных: {active_count}\n"
@@ -573,11 +773,12 @@ def check_sold_for_brand(brand, chat_id):
         f"Всего проверено: {len(items)}"
     )
     send_telegram_message(msg, chat_id=chat_id)
+    # Показываем обновлённый список товаров (активные)
+    msg, kb = build_items_by_brand(brand, 0, show_sold=False)
+    send_telegram_message(msg, keyboard=kb, chat_id=chat_id)
 
-    # Показываем обновлённый список товаров
-    send_items_by_brand(brand, 0, chat_id)
+# ==================== Вебхуки и маршруты Flask ====================
 
-# ==================== Вебхуки и маршруты ====================
 @app.route('/health', methods=['GET'])
 def health():
     return "OK", 200
@@ -592,232 +793,42 @@ def webhook():
     return 'OK', 200
 
 # ==================== Обработчик обновлений ====================
+
 def handle_update(update):
     try:
-        # СПИСОК РАЗРЕШЁННЫХ ПОЛЬЗОВАТЕЛЕЙ
-        ALLOWED_USER_IDS = [945746201, 1600234834]
-        
-        # Принудительно сбрасываем флаг остановки при любой команде
-        with state_lock:
-            if BOT_STATE.get('stop_requested', False):
-                BOT_STATE['stop_requested'] = False
-                logger.info("🔄 Сброс stop_requested при получении команды")
-        
-        # Проверяем, откуда пришло обновление
+        # Сброс stop_event при любой команде? Нет, оставляем как есть.
+        # Проверка пользователя
         if 'callback_query' in update:
             user_id = update['callback_query']['from']['id']
         elif 'message' in update:
             user_id = update['message']['from']['id']
         else:
             return
-        
-        # Если пользователь не в списке разрешённых – игнорируем
         if user_id not in ALLOWED_USER_IDS:
             logger.warning(f"Заблокирован доступ для user_id: {user_id}")
             return
-        
+
         if 'callback_query' in update:
             q = update['callback_query']
             data = q['data']
             chat_id = q['from']['id']
-            token = TELEGRAM_BOT_TOKEN
-            if token:
-                requests.post(f"https://api.telegram.org/bot{token}/answerCallbackQuery",
-                              json={'callback_query_id': q['id']})
+            answer_callback(q['id'])
 
-            if data == 'main_menu':
-                send_main_menu(chat_id)
-            elif data == 'mode_menu':
-                send_mode_menu(chat_id)
-            elif data == 'toggle_turbo':
-                with state_lock:
-                    BOT_STATE['turbo_mode'] = not BOT_STATE['turbo_mode']
-                    mode = "🐱‍🏍 ТУРБО" if BOT_STATE['turbo_mode'] else "🐢 Обычный"
-                send_telegram_message(f"⚡ Режим изменён: {mode}", chat_id=chat_id)
-                send_main_menu(chat_id)
-            elif data == 'platforms_menu':
-                send_platforms_menu(chat_id)
-            elif data == 'stats':
-                send_stats(chat_id)
-            elif data == 'brands_list':
-                send_brands_list(0, chat_id)
-            elif data == 'select_brands_menu':
-                send_select_brands_menu(chat_id)
-            elif data == 'interval':
-                send_interval_menu(chat_id)
-            elif data == 'toggle_pause':
-                with state_lock:
-                    BOT_STATE['paused'] = not BOT_STATE['paused']
-                    status = "⏸ ПАУЗА" if BOT_STATE['paused'] else "▶️ АКТИВЕН"
-                send_telegram_message(f"Статус изменён: {status}", chat_id=chat_id)
-                send_main_menu(chat_id)
-            elif data == 'mode_auto':
-                with state_lock:
-                    BOT_STATE['mode'] = 'auto'
-                send_telegram_message("✅ Режим: автоматический", chat_id=chat_id)
-                send_main_menu(chat_id)
-            elif data == 'mode_manual':
-                with state_lock:
-                    if BOT_STATE['selected_brands']:
-                        BOT_STATE['mode'] = 'manual'
-                        send_telegram_message(f"✅ Режим: ручной ({len(BOT_STATE['selected_brands'])} брендов)", chat_id=chat_id)
-                    else:
-                        send_telegram_message("⚠️ Сначала выберите бренды!", chat_id=chat_id)
-                send_main_menu(chat_id)
-            elif data.startswith('toggle_platform_'):
-                platform = data.replace('toggle_platform_', '')
-                with state_lock:
-                    if platform in BOT_STATE['selected_platforms']:
-                        BOT_STATE['selected_platforms'].remove(platform)
-                    else:
-                        BOT_STATE['selected_platforms'].append(platform)
-                    BOT_STATE['mode'] = 'manual'
-                send_platforms_menu(chat_id)
-            elif data.startswith('page_'):
-                page = int(data.split('_')[1])
-                send_brands_list(page, chat_id)
-            elif data.startswith('toggle_'):
-                brand = data[7:]
-                with state_lock:
-                    if brand in BOT_STATE['selected_brands']:
-                        BOT_STATE['selected_brands'].remove(brand)
-                        send_telegram_message(f"❌ {brand} убран", chat_id=chat_id)
-                    else:
-                        BOT_STATE['selected_brands'].append(brand)
-                        send_telegram_message(f"✅ {brand} добавлен", chat_id=chat_id)
-                    if BOT_STATE['selected_brands']:
-                        BOT_STATE['mode'] = 'manual'
-                    else:
-                        BOT_STATE['mode'] = 'auto'
-                send_brands_list(0, chat_id)
-            elif data == 'clear_all':
-                with state_lock:
-                    BOT_STATE['selected_brands'] = []
-                    BOT_STATE['mode'] = 'auto'
-                send_telegram_message("🗑 Список очищен", chat_id=chat_id)
-                send_select_brands_menu(chat_id)
-            elif data.startswith('int_'):
-                new_interval = int(data.split('_')[1])
-                with state_lock:
-                    BOT_STATE['interval'] = new_interval
-                send_telegram_message(f"✅ Интервал установлен: {new_interval} мин", chat_id=chat_id)
-                send_main_menu(chat_id)
-            elif data == 'start_check':
-                if BOT_STATE['is_checking']:
-                    send_telegram_message("⚠️ Уже выполняется", chat_id=chat_id)
-                else:
-                    from scheduler import check_all_marketplaces
-                    Thread(target=check_all_marketplaces).start()
-            
-            # НОВЫЙ ОБРАБОТЧИК ДЛЯ СУПЕР-ТУРБО
-            elif data == 'start_super_turbo':
-                if BOT_STATE['is_checking']:
-                    send_telegram_message("⚠️ Уже выполняется", chat_id=chat_id)
-                else:
-                    from scheduler import run_super_turbo_search
-                    
-                    # Получаем список вариаций для поиска
-                    with state_lock:
-                        mode = BOT_STATE['mode']
-                        selected_brands = BOT_STATE['selected_brands'].copy()
-                        platforms = BOT_STATE['selected_platforms'].copy()
-                    
-                    if mode == 'auto':
-                        # В авторежиме берём все вариации
-                        all_vars = []
-                        for group in BRAND_GROUPS:
-                            for typ in ['latin', 'jp', 'cn', 'universal']:
-                                if typ in group['variations']:
-                                    all_vars.extend(group['variations'][typ])
-                        keywords = list(set(all_vars))[:50]
-                    else:
-                        # В ручном режиме берём вариации выбранных брендов
-                        keywords = []
-                        for brand in selected_brands:
-                            vars_list = get_variations_for_platform(brand, platforms[0] if platforms else 'Mercari JP')
-                            keywords.extend(vars_list)
-                    
-                    send_telegram_message(f"⚡ Запускаю супер-турбо поиск по {len(keywords)} ключам...", chat_id=chat_id)
-                    Thread(target=run_super_turbo_search, args=(keywords, platforms, chat_id)).start()
-            
-            elif data == 'stop_check':
-                with state_lock:
-                    BOT_STATE['stop_requested'] = True
-                send_telegram_message("⏹️ Проверка будет остановлена после текущего запроса", chat_id=chat_id)
-            elif data == 'proxy_menu':
-                send_proxy_menu(chat_id)
-            elif data == 'proxy_add':
-                send_telegram_message("📝 Отправьте список прокси (каждый с новой строки).\n"
-                                      "Формат: protocol://ip:port (например, http://123.45.67.89:8080 или socks5://...)",
-                                      chat_id=chat_id)
-                with state_lock:
-                    BOT_STATE['awaiting_proxy'] = True
-            elif data == 'proxy_check':
-                send_telegram_message("🔄 Проверка прокси...", chat_id=chat_id)
-                Thread(target=check_all_proxies, args=(chat_id,)).start()
-            elif data == 'proxy_stats':
-                stats = get_proxy_stats()
-                msg = (f"📊 Статистика прокси:\n"
-                       f"Всего в пуле: {stats['total']}\n"
-                       f"Рабочих: {stats['good']}\n"
-                       f"Нерабочих: {stats['bad']}\n"
-                       f"Текущий индекс: {stats['current_index']}\n"
-                       f"Запросов на этом прокси: {stats['requests_this_proxy']}")
-                send_telegram_message(msg, chat_id=chat_id)
-                send_proxy_menu(chat_id)
-            elif data == 'proxy_clean':
-                send_telegram_message("🧹 Очистка нерабочих прокси...", chat_id=chat_id)
-                Thread(target=clean_proxies, args=(chat_id,)).start()
-            elif data == 'myitems_menu':
-                send_my_items_menu(chat_id)
-            elif data == 'myitems_brands':
-                send_brands_list_for_items(0, chat_id)
-            elif data == 'myitems_stats':
-                send_brands_stats(chat_id)
-            elif data.startswith('itembrands_page_'):
-                page = int(data.split('_')[-1])
-                send_brands_list_for_items(page, chat_id)
-            elif data.startswith('showbrand_'):
-                brand = data[10:]
-                send_items_by_brand(brand, 0, chat_id)
-            elif data.startswith('brandpage_'):
-                parts = data.split('_')
-                brand = '_'.join(parts[1:-1])
-                page = int(parts[-1])
-                send_items_by_brand(brand, page, chat_id)
-            elif data.startswith('checksold_'):
-                brand = data[10:]
-                send_telegram_message(f"🔄 Проверяю товары бренда {brand}...", chat_id=chat_id)
-                Thread(target=check_sold_for_brand, args=(brand, chat_id)).start()
-                
-        elif 'message' in update:
-            chat_id = update['message']['chat']['id']
-            text = update['message'].get('text', '')
-
-            with state_lock:
-                awaiting = BOT_STATE.get('awaiting_proxy', False)
-
-            if awaiting:
-                with state_lock:
-                    BOT_STATE['awaiting_proxy'] = False
-                lines = text.strip().split('\n')
-                proxies = [line.strip() for line in lines if line.strip()]
-                if not proxies:
-                    send_telegram_message("❌ Список пуст. Попробуйте снова.", chat_id=chat_id)
-                else:
-                    send_telegram_message(f"🔍 Проверяю {len(proxies)} прокси...", chat_id=chat_id)
-                    Thread(target=add_proxies_from_list, args=(proxies, chat_id)).start()
+            # Ищем обработчик
+            handler = CALLBACK_HANDLERS.get(data)
+            if handler:
+                handler(q, chat_id)
                 return
-
-            if text == '/start':
-                send_main_menu(chat_id)
-            else:
-                send_telegram_message("❌ Неизвестная команда. Используйте /start", chat_id=chat_id)
+            # Проверяем префиксные обработчики
+            for prefix, h in PREFIX_HANDLERS.items():
+                if data.startswith(prefix):
+                    h(q, chat_id)
+                    return
+            logger.warning(f"Неизвестный callback: {data}")
+        elif 'message' in update:
+            handle_message(update)
     except Exception as e:
         logger.error(f"Ошибка в обработчике: {e}")
 
 # Сохраняем функцию отправки в BOT_STATE
 BOT_STATE['send_to_telegram'] = send_telegram_message
-if 'start_time' not in BOT_STATE:
-    with state_lock:
-        BOT_STATE['start_time'] = time.time()
