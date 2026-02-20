@@ -83,7 +83,7 @@ def send_telegram_album(media_group, chat_id=None):
 
 def send_main_menu(chat_id=None):
     turbo_status = "🐱‍🏍 ТУРБО" if BOT_STATE.get('turbo_mode') else "🐢 Обычный"
-
+    
     keyboard = {
         "inline_keyboard": [
             [{"text": "🚀 Запустить проверку", "callback_data": "start_check"}],
@@ -99,7 +99,7 @@ def send_main_menu(chat_id=None):
             [{"text": "⏸ Пауза / ▶️ Продолжить", "callback_data": "toggle_pause"}]
         ]
     }
-
+    
     with state_lock:
         platforms = ", ".join(BOT_STATE['selected_platforms']) if BOT_STATE['selected_platforms'] else "Нет"
         brands_info = f"Выбрано: {len(BOT_STATE['selected_brands'])}" if BOT_STATE['selected_brands'] else "Бренды не выбраны"
@@ -487,7 +487,7 @@ def handle_update(update):
             elif data == 'stop_check':
                 with state_lock:
                     BOT_STATE['stop_requested'] = True
-                send_telegram_message("⏹️ Проверка будет остановлена после текущего запроса", chat_id=chat_id)                    
+                send_telegram_message("⏹️ Проверка будет остановлена после текущего запроса", chat_id=chat_id)
             elif data == 'proxy_menu':
                 send_proxy_menu(chat_id)
             elif data == 'proxy_add':

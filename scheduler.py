@@ -16,6 +16,7 @@ from utils import (
 )
 
 def process_new_items(items, platform):
+    """Обрабатывает список товаров, сохраняет новые и возвращает их"""
     new_items = []
     for item in items:
         if 'id' not in item:
@@ -28,6 +29,7 @@ def process_new_items(items, platform):
     return new_items
 
 def check_platform(platform, variations, chat_id=None):
+    """Парсит одну платформу по списку вариаций с маскировкой."""
     parser = PARSERS.get(platform)
     if not parser:
         logger.warning(f"Нет парсера для {platform}")
@@ -42,7 +44,7 @@ def check_platform(platform, variations, chat_id=None):
         with state_lock:
             if BOT_STATE.get('stop_requested', False):
                 logger.info(f"⏹️ Остановка проверки на платформе {platform} по запросу пользователя")
-                # Сбросим флаг, чтобы следующая проверка не была остановлена сразу
+                # Сбрасываем флаг, чтобы следующая проверка не была остановлена сразу
                 with state_lock:
                     BOT_STATE['stop_requested'] = False
                 break
@@ -68,13 +70,14 @@ def check_platform(platform, variations, chat_id=None):
     return platform_new_items
 
 def check_all_marketplaces(chat_id=None):
+    """Основная функция проверки всех выбранных площадок."""
     with state_lock:
+        # Сбрасываем флаг остановки перед началом проверки
+        BOT_STATE['stop_requested'] = False
         if BOT_STATE['is_checking'] or BOT_STATE['paused']:
             logger.warning("Проверка уже выполняется или бот на паузе")
             return
         BOT_STATE['is_checking'] = True
-        # Сбрасываем флаг остановки перед началом проверки (если вдруг остался)
-        BOT_STATE['stop_requested'] = False
         platforms = BOT_STATE['selected_platforms'].copy()
         mode = BOT_STATE['mode']
         selected_brands = BOT_STATE['selected_brands'].copy()
@@ -139,7 +142,7 @@ def check_all_marketplaces(chat_id=None):
         BOT_STATE['stats']['total_finds'] += len(all_new_items)
         BOT_STATE['last_check'] = time.strftime('%Y-%m-%d %H:%M:%S')
         BOT_STATE['is_checking'] = False
-        # Сбрасываем флаг остановки (на всякий случай, если вдруг остался)
+        # Сбрасываем флаг остановки (на случай, если проверка завершилась без остановки)
         BOT_STATE['stop_requested'] = False
 
     logger.info(f"✅ Проверка завершена. Найдено новых товаров: {len(all_new_items)}")
@@ -149,6 +152,7 @@ def check_all_marketplaces(chat_id=None):
     logger.info(f"📊 Итоговая статистика прокси: всего {proxy_stats['total']}, рабочих {proxy_stats['good']}")
 
 def run_scheduler():
+    """Планировщик, запускающий проверки по интервалу."""
     logger.info("⏰ Планировщик запущен")
     last_run = 0
     first = True
@@ -157,7 +161,7 @@ def run_scheduler():
         with state_lock:
             turbo = BOT_STATE.get('turbo_mode', False)
             if turbo:
-                interval = 5 * 60
+                interval = 5 * 60  # 5 минут в турбо-режиме
             else:
                 interval = BOT_STATE['interval'] * 60
             paused = BOT_STATE['paused']
