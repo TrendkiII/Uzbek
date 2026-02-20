@@ -371,17 +371,10 @@ def webhook():
     return 'OK', 200
 
 # ==================== Обработчик обновлений ====================
-# ==================== Обработчик обновлений ====================
 def handle_update(update):
     try:
-        # Твой Telegram ID (узнай у @userinfobot)
-        # Вместо одной переменной создай список
-ALLOWED_USER_IDS = [945746201, 1308690114]  # твой ID и ID друзей
-
-# Проверка
-if user_id not in ALLOWED_USER_IDS:
-    logger.warning(f"Заблокирован доступ для user_id: {user_id}")
-    return
+        # СПИСОК РАЗРЕШЁННЫХ ПОЛЬЗОВАТЕЛЕЙ (добавляй сюда новые ID)
+        ALLOWED_USER_IDS = [945746201, 1308690114]  # твой ID и ID друзей
         
         # Проверяем, откуда пришло обновление
         if 'callback_query' in update:
@@ -391,12 +384,12 @@ if user_id not in ALLOWED_USER_IDS:
         else:
             return  # Непонятный тип обновления
         
-        # Если пользователь не ты – игнорируем
-        if user_id != YOUR_USER_ID:
+        # Если пользователь не в списке разрешённых – игнорируем
+        if user_id not in ALLOWED_USER_IDS:
             logger.warning(f"Заблокирован доступ для user_id: {user_id}")
             return
         
-        # Дальше идёт твой существующий код обработки
+        # ДАЛЬШЕ ВЕСЬ ОБЫЧНЫЙ КОД ОБРАБОТКИ
         if 'callback_query' in update:
             q = update['callback_query']
             data = q['data']
