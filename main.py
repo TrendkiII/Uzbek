@@ -27,7 +27,7 @@ def setup_webhook():
         if railway_url:
             webhook_url = f"https://{railway_url}"
         else:
-            webhook_url = "https://your-app.railway.app"
+            webhook_url = "https://uzbek-production.up.railway.app"
             logger.warning(f"⚠️ WEBHOOK_URL не задан, использую {webhook_url}")
 
     try:

@@ -494,26 +494,87 @@ def check_sold_for_brand(brand, chat_id):
     """Проверяет товары конкретного бренда на статус 'продан'"""
     from database import get_items_by_brand_main, check_item_status
     from parsers import PARSERS
-    
+    import requests
+    from bs4 import BeautifulSoup
+
     items = get_items_by_brand_main(brand, limit=100, include_sold=False)
     if not items:
         send_telegram_message(f"❌ Нет активных товаров для бренда {brand}", chat_id=chat_id)
         send_items_by_brand(brand, 0, chat_id)
         return
-    
+
     send_telegram_message(f"🔄 Проверяю {len(items)} товаров бренда {brand}...", chat_id=chat_id)
-    
+
     sold_count = 0
-    for item in items:
-        parser = PARSERS.get(item['source'])
-        if not parser:
-            continue
-        
-        check_item_status(item['id'], False)
-        sold_count += 1
-        time.sleep(0.5)
-    
-    send_telegram_message(f"💰 Отмечено как проданные: {sold_count} товаров", chat_id=chat_id)
+    active_count = 0
+    error_count = 0
+
+    for i, item in enumerate(items, 1):
+        try:
+            # Отправляем сообщение о прогрессе каждые 10 товаров
+            if i % 10 == 0:
+                send_telegram_message(f"⏳ Проверено {i}/{len(items)}...", chat_id=chat_id)
+
+            # Получаем страницу товара
+            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+            response = requests.get(item['url'], headers=headers, timeout=10)
+
+            if response.status_code != 200:
+                error_count += 1
+                continue
+
+            soup = BeautifulSoup(response.text, 'lxml')
+            is_sold = False
+
+            # Проверяем разные индикаторы "продано" в зависимости от площадки
+            if item['source'] == 'Mercari JP':
+                # Mercari: ищем кнопку "売り切れ" (sold out) или "この商品は販売終了です"
+                sold_indicators = soup.select('[class*="sold"], [class*="SOLD"], .item-sold, .sold-out')
+                if sold_indicators or "売り切れ" in response.text:
+                    is_sold = True
+
+            elif item['source'] == 'eBay':
+                # eBay: ищем "This item is out of stock" или кнопка "See other items"
+                if "This item is out of stock" in response.text or "Sold" in response.text:
+                    is_sold = True
+
+            elif item['source'] == 'Yahoo Auction':
+                # Yahoo Auction: ищем "終了" (ended) или "この商品は終了しました"
+                if "終了" in response.text or "ended" in response.text.lower():
+                    is_sold = True
+
+            elif '2nd Street' in item['source']:
+                # 2nd Street: ищем "SOLD OUT" или "売り切れ"
+                if "SOLD OUT" in response.text or "売り切れ" in response.text:
+                    is_sold = True
+
+            # Если товар продан, помечаем в базе
+            if is_sold:
+                check_item_status(item['id'], False)
+                sold_count += 1
+                logger.info(f"💰 Товар продан: {item['title'][:50]} - {item['url']}")
+            else:
+                # Если товар активен, обновляем время проверки
+                check_item_status(item['id'], True)
+                active_count += 1
+
+            time.sleep(0.5)  # задержка между запросами
+
+        except Exception as e:
+            logger.error(f"❌ Ошибка при проверке товара {item.get('id')}: {e}")
+            error_count += 1
+
+    # Отправляем итоговое сообщение
+    msg = (
+        f"📊 Результаты проверки бренда {brand}:\n"
+        f"✅ Активных: {active_count}\n"
+        f"💰 Проданных: {sold_count}\n"
+        f"❌ Ошибок: {error_count}\n"
+        f"Всего проверено: {len(items)}"
+    )
+    send_telegram_message(msg, chat_id=chat_id)
+
+    # Показываем обновлённый список товаров
     send_items_by_brand(brand, 0, chat_id)
 
 # ==================== Вебхуки и маршруты ====================
