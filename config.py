@@ -37,7 +37,8 @@ BOT_STATE = {
         "platform_stats": {platform: {"checks": 0, "finds": 0} for platform in ALL_PLATFORMS}
     },
     "send_to_telegram": None,
-    "awaiting_proxy": False
+    "awaiting_proxy": False,
+    "stop_requested": False,           # <-- новый флаг для остановки проверки
 }
 
 # ==================== Telegram ====================

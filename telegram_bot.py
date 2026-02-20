@@ -83,7 +83,7 @@ def send_telegram_album(media_group, chat_id=None):
 
 def send_main_menu(chat_id=None):
     turbo_status = "🐱‍🏍 ТУРБО" if BOT_STATE.get('turbo_mode') else "🐢 Обычный"
-    
+
     keyboard = {
         "inline_keyboard": [
             [{"text": "🚀 Запустить проверку", "callback_data": "start_check"}],
@@ -95,9 +95,11 @@ def send_main_menu(chat_id=None):
             [{"text": "⏱ Интервал", "callback_data": "interval"}],
             [{"text": "🔄 Выбрать бренды", "callback_data": "select_brands_menu"}],
             [{"text": "🔧 Управление прокси", "callback_data": "proxy_menu"}],
+            [{"text": "⏹️ Остановить проверку", "callback_data": "stop_check"}],
             [{"text": "⏸ Пауза / ▶️ Продолжить", "callback_data": "toggle_pause"}]
         ]
     }
+
     with state_lock:
         platforms = ", ".join(BOT_STATE['selected_platforms']) if BOT_STATE['selected_platforms'] else "Нет"
         brands_info = f"Выбрано: {len(BOT_STATE['selected_brands'])}" if BOT_STATE['selected_brands'] else "Бренды не выбраны"
@@ -374,7 +376,7 @@ def webhook():
 def handle_update(update):
     try:
         # СПИСОК РАЗРЕШЁННЫХ ПОЛЬЗОВАТЕЛЕЙ (добавляй сюда новые ID)
-        ALLOWED_USER_IDS = [945746201, 1308690114]  # твой ID и ID друзей
+        ALLOWED_USER_IDS = [945746201, 1600234834]  # твой ID и ID друзей
         
         # Проверяем, откуда пришло обновление
         if 'callback_query' in update:
@@ -482,6 +484,10 @@ def handle_update(update):
                 else:
                     from scheduler import check_all_marketplaces
                     Thread(target=check_all_marketplaces).start()
+            elif data == 'stop_check':
+                with state_lock:
+                    BOT_STATE['stop_requested'] = True
+                send_telegram_message("⏹️ Проверка будет остановлена после текущего запроса", chat_id=chat_id)                    
             elif data == 'proxy_menu':
                 send_proxy_menu(chat_id)
             elif data == 'proxy_add':
