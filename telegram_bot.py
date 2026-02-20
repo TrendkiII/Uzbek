@@ -17,6 +17,24 @@ from utils import (
 
 app = Flask(__name__)
 
+# ==================== ПРОСТЫЕ МАРШРУТЫ ДЛЯ HEALTHCHECK ====================
+@app.route('/health', methods=['GET'])
+def health():
+    """Максимально быстрый ответ для healthcheck"""
+    return 'OK', 200
+
+@app.route('/', methods=['GET'])
+def home():
+    """Главная страница – быстрый ответ"""
+    return 'Bot is alive', 200
+
+# ==================== ОСНОВНОЙ ВЕБХУК ====================
+@app.route('/', methods=['POST'])
+def webhook():
+    """Только POST от Telegram"""
+    Thread(target=handle_update, args=(request.json,)).start()
+    return 'OK', 200
+
 # ==================== Функции отправки ====================
 def send_telegram_message(text, photo_url=None, keyboard=None, chat_id=None):
     token = TELEGRAM_BOT_TOKEN
@@ -78,10 +96,9 @@ def send_telegram_album(media_group, chat_id=None):
         return False
 
 # ==================== Функции меню ====================
-
 def send_main_menu(chat_id=None):
     turbo_status = "🐱‍🏍 ТУРБО" if BOT_STATE.get('turbo_mode') else "🐢 Обычный"
-
+    
     keyboard = {
         "inline_keyboard": [
             [{"text": "🚀 Запустить проверку", "callback_data": "start_check"}],
@@ -277,20 +294,6 @@ def clean_proxies(chat_id):
     msg = f"✅ Осталось рабочих прокси: {len(working)}"
     send_telegram_message(msg, chat_id=chat_id)
     send_proxy_menu(chat_id)
-
-# ==================== Вебхуки и маршруты ====================
-@app.route('/health', methods=['GET'])
-def health():
-    return "OK", 200
-
-@app.route('/', methods=['GET'])
-def home():
-    return "Bot is alive", 200
-
-@app.route('/', methods=['POST'])
-def webhook():
-    Thread(target=handle_update, args=(request.json,)).start()
-    return 'OK', 200
 
 # ==================== Обработчик обновлений ====================
 def handle_update(update):
