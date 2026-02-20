@@ -10,7 +10,7 @@ from config import (
     BOT_STATE, state_lock, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID,
     logger, ALL_PLATFORMS, PROXY_POOL
 )
-from brands import BRAND_MAIN_NAMES, get_variations_for_platform
+from brands import BRAND_MAIN_NAMES, get_variations_for_platform, BRAND_GROUPS
 from parsers import PARSERS
 from utils import (
     generate_item_id, test_proxy, add_proxy_to_pool,
@@ -86,7 +86,8 @@ def send_main_menu(chat_id=None):
     
     keyboard = {
         "inline_keyboard": [
-            [{"text": "🚀 Запустить проверку", "callback_data": "start_check"}],
+            [{"text": "🚀 Обычный поиск", "callback_data": "start_check"}],
+            [{"text": "⚡ СУПЕР-ТУРБО", "callback_data": "start_super_turbo"}],
             [{"text": "⚙️ Режим работы", "callback_data": "mode_menu"}],
             [{"text": f"⚡ Режим: {turbo_status}", "callback_data": "toggle_turbo"}],
             [{"text": "🌐 Выбор площадок", "callback_data": "platforms_menu"}],
@@ -312,7 +313,7 @@ def send_items_by_brand(brand, page=0, chat_id=None):
         send_brands_list_for_items(0, chat_id)
         return
     
-    per_page = 5  # по 5 товаров на странице
+    per_page = 5
     start = page * per_page
     end = start + per_page
     total = len(items)
@@ -328,7 +329,6 @@ def send_items_by_brand(brand, page=0, chat_id=None):
     
     keyboard = {"inline_keyboard": []}
     
-    # Навигация
     nav = []
     if page > 0:
         nav.append({"text": "◀️", "callback_data": f"brandpage_{brand}_{page-1}"})
@@ -338,7 +338,6 @@ def send_items_by_brand(brand, page=0, chat_id=None):
     if nav:
         keyboard["inline_keyboard"].append(nav)
     
-    # Кнопки действий
     actions = [
         [{"text": "🔄 Проверить проданные", "callback_data": f"checksold_{brand}"}],
         [{"text": "📋 Все бренды", "callback_data": "myitems_brands"}],
@@ -510,8 +509,6 @@ def check_sold_for_brand(brand, chat_id):
         if not parser:
             continue
         
-        # Временно просто отмечаем как проданный для демонстрации
-        # В реальности здесь нужно проверять страницу товара
         check_item_status(item['id'], False)
         sold_count += 1
         time.sleep(0.5)
@@ -536,8 +533,14 @@ def webhook():
 # ==================== Обработчик обновлений ====================
 def handle_update(update):
     try:
-        # СПИСОК РАЗРЕШЁННЫХ ПОЛЬЗОВАТЕЛЕЙ (добавляй сюда новые ID)
-        ALLOWED_USER_IDS = [945746201, 1600234834]  # твой ID и ID друзей
+        # СПИСОК РАЗРЕШЁННЫХ ПОЛЬЗОВАТЕЛЕЙ
+        ALLOWED_USER_IDS = [945746201, 1600234834]
+        
+        # Принудительно сбрасываем флаг остановки при любой команде
+        with state_lock:
+            if BOT_STATE.get('stop_requested', False):
+                BOT_STATE['stop_requested'] = False
+                logger.info("🔄 Сброс stop_requested при получении команды")
         
         # Проверяем, откуда пришло обновление
         if 'callback_query' in update:
@@ -545,14 +548,13 @@ def handle_update(update):
         elif 'message' in update:
             user_id = update['message']['from']['id']
         else:
-            return  # Непонятный тип обновления
+            return
         
         # Если пользователь не в списке разрешённых – игнорируем
         if user_id not in ALLOWED_USER_IDS:
             logger.warning(f"Заблокирован доступ для user_id: {user_id}")
             return
         
-        # ДАЛЬШЕ ВЕСЬ ОБЫЧНЫЙ КОД ОБРАБОТКИ
         if 'callback_query' in update:
             q = update['callback_query']
             data = q['data']
@@ -645,6 +647,38 @@ def handle_update(update):
                 else:
                     from scheduler import check_all_marketplaces
                     Thread(target=check_all_marketplaces).start()
+            
+            # НОВЫЙ ОБРАБОТЧИК ДЛЯ СУПЕР-ТУРБО
+            elif data == 'start_super_turbo':
+                if BOT_STATE['is_checking']:
+                    send_telegram_message("⚠️ Уже выполняется", chat_id=chat_id)
+                else:
+                    from scheduler import run_super_turbo_search
+                    
+                    # Получаем список вариаций для поиска
+                    with state_lock:
+                        mode = BOT_STATE['mode']
+                        selected_brands = BOT_STATE['selected_brands'].copy()
+                        platforms = BOT_STATE['selected_platforms'].copy()
+                    
+                    if mode == 'auto':
+                        # В авторежиме берём все вариации
+                        all_vars = []
+                        for group in BRAND_GROUPS:
+                            for typ in ['latin', 'jp', 'cn', 'universal']:
+                                if typ in group['variations']:
+                                    all_vars.extend(group['variations'][typ])
+                        keywords = list(set(all_vars))[:50]
+                    else:
+                        # В ручном режиме берём вариации выбранных брендов
+                        keywords = []
+                        for brand in selected_brands:
+                            vars_list = get_variations_for_platform(brand, platforms[0] if platforms else 'Mercari JP')
+                            keywords.extend(vars_list)
+                    
+                    send_telegram_message(f"⚡ Запускаю супер-турбо поиск по {len(keywords)} ключам...", chat_id=chat_id)
+                    Thread(target=run_super_turbo_search, args=(keywords, platforms, chat_id)).start()
+            
             elif data == 'stop_check':
                 with state_lock:
                     BOT_STATE['stop_requested'] = True
@@ -673,8 +707,6 @@ def handle_update(update):
             elif data == 'proxy_clean':
                 send_telegram_message("🧹 Очистка нерабочих прокси...", chat_id=chat_id)
                 Thread(target=clean_proxies, args=(chat_id,)).start()
-            
-            # === НОВЫЕ ОБРАБОТЧИКИ ДЛЯ "МОИ НАХОДКИ" ===
             elif data == 'myitems_menu':
                 send_my_items_menu(chat_id)
             elif data == 'myitems_brands':
@@ -685,16 +717,15 @@ def handle_update(update):
                 page = int(data.split('_')[-1])
                 send_brands_list_for_items(page, chat_id)
             elif data.startswith('showbrand_'):
-                brand = data[10:]  # убираем 'showbrand_'
+                brand = data[10:]
                 send_items_by_brand(brand, 0, chat_id)
             elif data.startswith('brandpage_'):
-                # формат: brandpage_{brand}_{page}
                 parts = data.split('_')
-                brand = '_'.join(parts[1:-1])  # бренд может содержать подчёркивания
+                brand = '_'.join(parts[1:-1])
                 page = int(parts[-1])
                 send_items_by_brand(brand, page, chat_id)
             elif data.startswith('checksold_'):
-                brand = data[10:]  # убираем 'checksold_'
+                brand = data[10:]
                 send_telegram_message(f"🔄 Проверяю товары бренда {brand}...", chat_id=chat_id)
                 Thread(target=check_sold_for_brand, args=(brand, chat_id)).start()
                 
@@ -724,7 +755,7 @@ def handle_update(update):
     except Exception as e:
         logger.error(f"Ошибка в обработчике: {e}")
 
-# Сохраняем функцию отправки в BOT_STATE для использования в scheduler
+# Сохраняем функцию отправки в BOT_STATE
 BOT_STATE['send_to_telegram'] = send_telegram_message
 if 'start_time' not in BOT_STATE:
     with state_lock:

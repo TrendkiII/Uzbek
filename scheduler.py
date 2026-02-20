@@ -1,4 +1,3 @@
-
 import time
 import random
 from threading import Thread
@@ -15,11 +14,11 @@ from utils import (
     generate_item_id, human_delay, brand_delay,
     get_proxy_stats
 )
+from async_parsers import run_async_search
 
 def process_new_items(items, platform, brand_main=None):
     """
     Обрабатывает список товаров, сохраняет новые и возвращает их
-    Теперь сохраняет с привязкой к основному бренду
     """
     if not items:
         return []
@@ -44,7 +43,6 @@ def process_new_items(items, platform, brand_main=None):
 def check_platform(platform, variations, chat_id=None):
     """
     Парсит одну платформу по списку вариаций с маскировкой.
-    Теперь определяет основной бренд для каждой вариации
     """
     parser = PARSERS.get(platform)
     if not parser:
@@ -65,7 +63,6 @@ def check_platform(platform, variations, chat_id=None):
         with state_lock:
             if BOT_STATE.get('stop_requested', False):
                 logger.info(f"⏹️ Остановка проверки на платформе {platform} по запросу пользователя")
-                # Сбрасываем флаг, чтобы следующая проверка не была остановлена сразу
                 with state_lock:
                     BOT_STATE['stop_requested'] = False
                 break
@@ -76,7 +73,6 @@ def check_platform(platform, variations, chat_id=None):
         items = parser(var)
         
         if items:
-            # Передаём brand_main в process_new_items
             new = process_new_items(items, platform, brand_main)
             platform_new_items.extend(new)
             logger.info(f"[{platform}] Найдено {len(items)} товаров, новых {len(new)}")
@@ -92,8 +88,10 @@ def check_platform(platform, variations, chat_id=None):
     return platform_new_items
 
 def check_all_marketplaces(chat_id=None):
+    """
+    Обычная проверка (синхронная)
+    """
     with state_lock:
-        # Сбрасываем флаг остановки перед началом проверки
         BOT_STATE['stop_requested'] = False
         if BOT_STATE['is_checking'] or BOT_STATE['paused']:
             logger.warning("Проверка уже выполняется или бот на паузе")
@@ -104,18 +102,15 @@ def check_all_marketplaces(chat_id=None):
         selected_brands = BOT_STATE['selected_brands'].copy()
         turbo = BOT_STATE.get('turbo_mode', False)
 
-    # ВРЕМЕННАЯ ЗАЩИТА: если есть выбранные бренды, режим должен быть manual
     if selected_brands and mode == 'auto':
         mode = 'manual'
         logger.info(f"🔄 Автоматически переключено в manual для брендов: {selected_brands}")
 
-    logger.info(f"🚀 Запуск проверки в режиме {'ТУРБО' if turbo else 'обычном'}")
+    logger.info(f"🚀 Запуск обычной проверки в режиме {'ТУРБО' if turbo else 'обычном'}")
 
-    # Логируем статистику прокси перед началом
     proxy_stats = get_proxy_stats()
     logger.info(f"📊 Прокси в пуле: {proxy_stats['total']}, рабочих: {proxy_stats['good']}")
 
-    # Формируем список вариаций
     if mode == 'auto':
         all_vars = []
         for group in BRAND_GROUPS:
@@ -124,7 +119,6 @@ def check_all_marketplaces(chat_id=None):
                     all_vars.extend(group['variations'][typ])
         all_vars = list(set(all_vars))
         random.shuffle(all_vars)
-        # В турбо-режиме проверяем больше вариаций
         vars_per_platform = {p: all_vars[:30] if turbo else all_vars[:20] for p in platforms}
     else:
         if not selected_brands:
@@ -149,7 +143,6 @@ def check_all_marketplaces(chat_id=None):
             except Exception as e:
                 logger.error(f"❌ Ошибка при проверке {platform}: {e}")
 
-    # Отправка найденных товаров
     send_func = BOT_STATE.get('send_to_telegram')
     if send_func and all_new_items:
         logger.info(f"📨 Отправляю {len(all_new_items)} новых товаров")
@@ -168,20 +161,72 @@ def check_all_marketplaces(chat_id=None):
         else:
             logger.info("📭 Новых товаров не найдено")
 
-    # Обновляем статистику
     with state_lock:
         BOT_STATE['stats']['total_checks'] += 1
         BOT_STATE['stats']['total_finds'] += len(all_new_items)
         BOT_STATE['last_check'] = time.strftime('%Y-%m-%d %H:%M:%S')
         BOT_STATE['is_checking'] = False
-        # Сбрасываем флаг остановки (на случай, если проверка завершилась без остановки)
         BOT_STATE['stop_requested'] = False
 
-    logger.info(f"✅ Проверка завершена. Найдено новых товаров: {len(all_new_items)}")
+    logger.info(f"✅ Обычная проверка завершена. Найдено новых товаров: {len(all_new_items)}")
     
-    # Финальная статистика прокси
     proxy_stats = get_proxy_stats()
     logger.info(f"📊 Итоговая статистика прокси: всего {proxy_stats['total']}, рабочих {proxy_stats['good']}")
+
+# ==================== НОВАЯ ФУНКЦИЯ ДЛЯ СУПЕР-ТУРБО ====================
+def run_super_turbo_search(keywords, platforms, chat_id=None):
+    """
+    Запускает супер-быстрый асинхронный поиск
+    """
+    logger.info(f"⚡ Запуск супер-турбо поиска для {len(keywords)} ключей на {len(platforms)} площадках")
+    
+    # Асинхронный поиск
+    items = run_async_search(keywords, platforms, max_concurrent=30)
+    
+    if not items:
+        logger.info("📭 Товаров не найдено")
+        send_func = BOT_STATE.get('send_to_telegram')
+        if send_func:
+            send_func("📭 Товаров не найдено", chat_id=chat_id)
+        return []
+    
+    # Обработка результатов
+    new_items = []
+    for item in items:
+        # Определяем бренд из названия
+        brand_main = get_main_brand_by_variation(item.get('title', ''))
+        
+        # Сохраняем в базу
+        if add_item_with_brand(item, brand_main):
+            new_items.append(item)
+            with state_lock:
+                if item['source'] in BOT_STATE['stats']['platform_stats']:
+                    BOT_STATE['stats']['platform_stats'][item['source']]['finds'] += 1
+    
+    # Отправка уведомлений
+    send_func = BOT_STATE.get('send_to_telegram')
+    if send_func and new_items:
+        logger.info(f"📨 Отправляю {len(new_items)} новых товаров")
+        for item in new_items:
+            message = (
+                f"🆕 <b>{item['title'][:100]}</b>\n"
+                f"💰 {item['price']}\n"
+                f"🏷 {item['source']}\n"
+                f"🔗 <a href='{item['url']}'>Перейти к товару</a>"
+            )
+            send_func(message, item.get('img_url'))
+            time.sleep(0.5)
+    else:
+        if new_items:
+            logger.warning("⚠️ Функция отправки не найдена в BOT_STATE")
+    
+    logger.info(f"✅ Супер-турбо поиск завершен. Новых товаров: {len(new_items)}")
+    
+    # Отправляем итоговое сообщение
+    if send_func:
+        send_func(f"⚡ Супер-турбо поиск завершен! Найдено новых товаров: {len(new_items)}", chat_id=chat_id)
+    
+    return new_items
 
 def run_scheduler():
     """
@@ -195,7 +240,7 @@ def run_scheduler():
         with state_lock:
             turbo = BOT_STATE.get('turbo_mode', False)
             if turbo:
-                interval = 5 * 60  # 5 минут в турбо-режиме
+                interval = 5 * 60
             else:
                 interval = BOT_STATE['interval'] * 60
             paused = BOT_STATE['paused']
