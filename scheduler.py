@@ -7,16 +7,19 @@ from config import (
     MIN_DELAY_BETWEEN_REQUESTS, MAX_DELAY_BETWEEN_REQUESTS,
     MIN_DELAY_BETWEEN_BRANDS, MAX_DELAY_BETWEEN_BRANDS
 )
-from brands import expand_selected_brands_for_platforms, BRAND_GROUPS
+from brands import expand_selected_brands_for_platforms, BRAND_GROUPS, get_main_brand_by_variation
 from parsers import PARSERS
-from database import add_items_bulk, add_item
+from database import add_item_with_brand
 from utils import (
     generate_item_id, human_delay, brand_delay,
     get_proxy_stats
 )
 
-def process_new_items(items, platform):
-    """Обрабатывает список товаров, сохраняет новые и возвращает их"""
+def process_new_items(items, platform, brand_main=None):
+    """
+    Обрабатывает список товаров, сохраняет новые и возвращает их
+    Теперь сохраняет с привязкой к основному бренду
+    """
     if not items:
         return []
     
@@ -25,28 +28,23 @@ def process_new_items(items, platform):
         if 'id' not in item:
             item['id'] = generate_item_id(item)
     
-    # Массовое добавление в БД (быстрее)
-    new_count = add_items_bulk(items)
+    new_items = []
     
-    # Обновляем статистику для новых товаров
-    if new_count > 0:
-        with state_lock:
-            if platform in BOT_STATE['stats']['platform_stats']:
-                BOT_STATE['stats']['platform_stats'][platform]['finds'] += new_count
-        
-        # Возвращаем только новые товары (для отправки)
-        # Находим их по наличию ID в БД
-        new_items = []
-        for item in items:
-            # Проверяем, действительно ли товар новый
-            if add_item(item):  # add_item вернёт True только для новых
-                new_items.append(item)
-        return new_items
+    for item in items:
+        # Добавляем товар в базу с указанием основного бренда
+        if add_item_with_brand(item, brand_main):
+            new_items.append(item)
+            with state_lock:
+                if platform in BOT_STATE['stats']['platform_stats']:
+                    BOT_STATE['stats']['platform_stats'][platform]['finds'] += 1
     
-    return []
+    return new_items
 
 def check_platform(platform, variations, chat_id=None):
-    """Парсит одну платформу по списку вариаций с маскировкой."""
+    """
+    Парсит одну платформу по списку вариаций с маскировкой.
+    Теперь определяет основной бренд для каждой вариации
+    """
     parser = PARSERS.get(platform)
     if not parser:
         logger.warning(f"Нет парсера для {platform}")
@@ -57,6 +55,11 @@ def check_platform(platform, variations, chat_id=None):
     request_count = 0
     
     for var in variations:
+        # Получаем основной бренд для этой вариации (НОВАЯ ФУНКЦИЯ)
+        brand_main = get_main_brand_by_variation(var)
+        if brand_main:
+            logger.info(f"🔍 Вариация '{var}' соответствует бренду '{brand_main}'")
+        
         # Проверяем флаг остановки
         with state_lock:
             if BOT_STATE.get('stop_requested', False):
@@ -72,7 +75,8 @@ def check_platform(platform, variations, chat_id=None):
         items = parser(var)
         
         if items:
-            new = process_new_items(items, platform)
+            # Передаём brand_main в process_new_items
+            new = process_new_items(items, platform, brand_main)
             platform_new_items.extend(new)
             logger.info(f"[{platform}] Найдено {len(items)} товаров, новых {len(new)}")
         
@@ -87,7 +91,9 @@ def check_platform(platform, variations, chat_id=None):
     return platform_new_items
 
 def check_all_marketplaces(chat_id=None):
-    """Основная функция проверки всех выбранных площадок."""
+    """
+    Основная функция проверки всех выбранных площадок.
+    """
     with state_lock:
         # Сбрасываем флаг остановки перед началом проверки
         BOT_STATE['stop_requested'] = False
@@ -175,7 +181,9 @@ def check_all_marketplaces(chat_id=None):
     logger.info(f"📊 Итоговая статистика прокси: всего {proxy_stats['total']}, рабочих {proxy_stats['good']}")
 
 def run_scheduler():
-    """Планировщик, запускающий проверки по интервалу."""
+    """
+    Планировщик, запускающий проверки по интервалу.
+    """
     logger.info("⏰ Планировщик запущен")
     last_run = 0
     first = True

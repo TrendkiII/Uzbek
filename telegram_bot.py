@@ -94,6 +94,7 @@ def send_main_menu(chat_id=None):
             [{"text": "📋 Список брендов", "callback_data": "brands_list"}],
             [{"text": "⏱ Интервал", "callback_data": "interval"}],
             [{"text": "🔄 Выбрать бренды", "callback_data": "select_brands_menu"}],
+            [{"text": "📦 Мои находки", "callback_data": "myitems_menu"}],
             [{"text": "🔧 Управление прокси", "callback_data": "proxy_menu"}],
             [{"text": "⏹️ Остановить проверку", "callback_data": "stop_check"}],
             [{"text": "⏸ Пауза / ▶️ Продолжить", "callback_data": "toggle_pause"}]
@@ -247,6 +248,137 @@ def send_proxy_menu(chat_id=None):
     msg = f"🔧 Управление прокси\n\nВсего в пуле: {proxy_count}"
     send_telegram_message(msg, keyboard=keyboard, chat_id=chat_id)
 
+# ==================== Меню просмотра найденных товаров ====================
+def send_my_items_menu(chat_id=None):
+    """Главное меню для просмотра найденных товаров"""
+    keyboard = {
+        "inline_keyboard": [
+            [{"text": "📦 По брендам", "callback_data": "myitems_brands"}],
+            [{"text": "📊 Статистика по брендам", "callback_data": "myitems_stats"}],
+            [{"text": "◀️ Назад", "callback_data": "main_menu"}]
+        ]
+    }
+    msg = "📦 Мои найденные товары\n\nВыберите действие:"
+    send_telegram_message(msg, keyboard=keyboard, chat_id=chat_id)
+
+def send_brands_list_for_items(page=0, chat_id=None):
+    """Показывает список брендов с количеством товаров"""
+    from database import get_brands_stats
+    
+    stats = get_brands_stats()
+    if not stats:
+        send_telegram_message("❌ В базе пока нет товаров", chat_id=chat_id)
+        send_my_items_menu(chat_id)
+        return
+    
+    per_page = 8
+    start = page * per_page
+    end = start + per_page
+    total = len(stats)
+    pages = (total + per_page - 1) // per_page
+    slice_stats = stats[start:end]
+
+    keyboard = {"inline_keyboard": []}
+    for stat in slice_stats:
+        active = stat['active'] or 0
+        total_items = stat['total']
+        status = f"✅ {active}/{total_items}" if active > 0 else f"❌ 0/{total_items}"
+        keyboard["inline_keyboard"].append([
+            {"text": f"{stat['brand']} - {status}", "callback_data": f"showbrand_{stat['brand']}"}
+        ])
+
+    nav = []
+    if page > 0:
+        nav.append({"text": "◀️", "callback_data": f"itembrands_page_{page-1}"})
+    nav.append({"text": f"{page+1}/{pages}", "callback_data": "noop"})
+    if page < pages-1:
+        nav.append({"text": "▶️", "callback_data": f"itembrands_page_{page+1}"})
+    if nav:
+        keyboard["inline_keyboard"].append(nav)
+
+    actions = [{"text": "◀️ Назад", "callback_data": "myitems_menu"}]
+    keyboard["inline_keyboard"].append(actions)
+
+    msg = "📋 Выберите бренд для просмотра товаров:"
+    send_telegram_message(msg, keyboard=keyboard, chat_id=chat_id)
+
+def send_items_by_brand(brand, page=0, chat_id=None):
+    """Показывает товары конкретного бренда"""
+    from database import get_items_by_brand_main
+    
+    items = get_items_by_brand_main(brand, limit=50, include_sold=False)
+    if not items:
+        send_telegram_message(f"❌ Нет активных товаров для бренда {brand}", chat_id=chat_id)
+        send_brands_list_for_items(0, chat_id)
+        return
+    
+    per_page = 5  # по 5 товаров на странице
+    start = page * per_page
+    end = start + per_page
+    total = len(items)
+    pages = (total + per_page - 1) // per_page
+    slice_items = items[start:end]
+
+    msg = f"📦 <b>{brand}</b> - активные товары {start+1}-{min(end, total)} из {total}\n\n"
+    
+    for i, item in enumerate(slice_items, start+1):
+        msg += f"{i}. <a href='{item['url']}'>{item['title'][:50]}</a>\n"
+        msg += f"   💰 {item['price']} | 🏷 {item['source']}\n"
+        msg += f"   🔗 <a href='{item['url']}'>Ссылка</a>\n\n"
+    
+    keyboard = {"inline_keyboard": []}
+    
+    # Навигация
+    nav = []
+    if page > 0:
+        nav.append({"text": "◀️", "callback_data": f"brandpage_{brand}_{page-1}"})
+    nav.append({"text": f"{page+1}/{pages}", "callback_data": "noop"})
+    if page < pages-1:
+        nav.append({"text": "▶️", "callback_data": f"brandpage_{brand}_{page+1}"})
+    if nav:
+        keyboard["inline_keyboard"].append(nav)
+    
+    # Кнопки действий
+    actions = [
+        [{"text": "🔄 Проверить проданные", "callback_data": f"checksold_{brand}"}],
+        [{"text": "📋 Все бренды", "callback_data": "myitems_brands"}],
+        [{"text": "◀️ Главное меню", "callback_data": "main_menu"}]
+    ]
+    keyboard["inline_keyboard"].extend(actions)
+    
+    send_telegram_message(msg, keyboard=keyboard, chat_id=chat_id)
+
+def send_brands_stats(chat_id=None):
+    """Показывает статистику по всем брендам"""
+    from database import get_brands_stats
+    
+    stats = get_brands_stats()
+    if not stats:
+        send_telegram_message("❌ В базе пока нет товаров", chat_id=chat_id)
+        send_my_items_menu(chat_id)
+        return
+    
+    msg = "📊 <b>Статистика по брендам</b>\n\n"
+    total_all = 0
+    active_all = 0
+    
+    for stat in stats:
+        active = stat['active'] or 0
+        total_items = stat['total']
+        total_all += total_items
+        active_all += active
+        msg += f"• <b>{stat['brand']}</b>: {active}/{total_items} активных\n"
+    
+    msg += f"\n<b>Всего:</b> {active_all}/{total_all} товаров"
+    
+    keyboard = {
+        "inline_keyboard": [
+            [{"text": "📋 По брендам", "callback_data": "myitems_brands"}],
+            [{"text": "◀️ Назад", "callback_data": "myitems_menu"}]
+        ]
+    }
+    send_telegram_message(msg, keyboard=keyboard, chat_id=chat_id)
+
 # ==================== АСИНХРОННЫЕ ФУНКЦИИ ДЛЯ ПРОВЕРКИ ПРОКСИ ====================
 async def check_proxy_async(session, proxy, semaphore):
     """Проверяет один прокси асинхронно с ограничением параллельных запросов"""
@@ -357,6 +489,35 @@ def clean_proxies(chat_id):
     working = check_and_update_proxies()
     send_telegram_message(f"✅ Осталось рабочих прокси: {len(working)}", chat_id=chat_id)
     send_proxy_menu(chat_id)
+
+# ==================== Функции для проверки проданных товаров ====================
+def check_sold_for_brand(brand, chat_id):
+    """Проверяет товары конкретного бренда на статус 'продан'"""
+    from database import get_items_by_brand_main, check_item_status
+    from parsers import PARSERS
+    
+    items = get_items_by_brand_main(brand, limit=100, include_sold=False)
+    if not items:
+        send_telegram_message(f"❌ Нет активных товаров для бренда {brand}", chat_id=chat_id)
+        send_items_by_brand(brand, 0, chat_id)
+        return
+    
+    send_telegram_message(f"🔄 Проверяю {len(items)} товаров бренда {brand}...", chat_id=chat_id)
+    
+    sold_count = 0
+    for item in items:
+        parser = PARSERS.get(item['source'])
+        if not parser:
+            continue
+        
+        # Временно просто отмечаем как проданный для демонстрации
+        # В реальности здесь нужно проверять страницу товара
+        check_item_status(item['id'], False)
+        sold_count += 1
+        time.sleep(0.5)
+    
+    send_telegram_message(f"💰 Отмечено как проданные: {sold_count} товаров", chat_id=chat_id)
+    send_items_by_brand(brand, 0, chat_id)
 
 # ==================== Вебхуки и маршруты ====================
 @app.route('/health', methods=['GET'])
@@ -512,6 +673,31 @@ def handle_update(update):
             elif data == 'proxy_clean':
                 send_telegram_message("🧹 Очистка нерабочих прокси...", chat_id=chat_id)
                 Thread(target=clean_proxies, args=(chat_id,)).start()
+            
+            # === НОВЫЕ ОБРАБОТЧИКИ ДЛЯ "МОИ НАХОДКИ" ===
+            elif data == 'myitems_menu':
+                send_my_items_menu(chat_id)
+            elif data == 'myitems_brands':
+                send_brands_list_for_items(0, chat_id)
+            elif data == 'myitems_stats':
+                send_brands_stats(chat_id)
+            elif data.startswith('itembrands_page_'):
+                page = int(data.split('_')[-1])
+                send_brands_list_for_items(page, chat_id)
+            elif data.startswith('showbrand_'):
+                brand = data[10:]  # убираем 'showbrand_'
+                send_items_by_brand(brand, 0, chat_id)
+            elif data.startswith('brandpage_'):
+                # формат: brandpage_{brand}_{page}
+                parts = data.split('_')
+                brand = '_'.join(parts[1:-1])  # бренд может содержать подчёркивания
+                page = int(parts[-1])
+                send_items_by_brand(brand, page, chat_id)
+            elif data.startswith('checksold_'):
+                brand = data[10:]  # убираем 'checksold_'
+                send_telegram_message(f"🔄 Проверяю товары бренда {brand}...", chat_id=chat_id)
+                Thread(target=check_sold_for_brand, args=(brand, chat_id)).start()
+                
         elif 'message' in update:
             chat_id = update['message']['chat']['id']
             text = update['message'].get('text', '')

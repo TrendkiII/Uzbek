@@ -24,15 +24,22 @@ def init_db():
                          url TEXT,
                          img_url TEXT,
                          source TEXT,
-                         found_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+                         brand_main TEXT,
+                         found_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                         last_checked TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                         is_active INTEGER DEFAULT 1)''')
             
             # Создаём индекс для быстрого поиска по источнику и времени
             c.execute('''CREATE INDEX IF NOT EXISTS idx_source_time 
                          ON items(source, found_at)''')
             
-            # Создаём индекс для поиска по бренду (по заголовку)
-            c.execute('''CREATE INDEX IF NOT EXISTS idx_title 
-                         ON items(title)''')
+            # Создаём индекс для поиска по бренду
+            c.execute('''CREATE INDEX IF NOT EXISTS idx_brand 
+                         ON items(brand_main)''')
+            
+            # Создаём индекс для проверки активности
+            c.execute('''CREATE INDEX IF NOT EXISTS idx_active 
+                         ON items(is_active)''')
             
             conn.commit()
             logger.info(f"✅ База данных SQLite инициализирована: {DB_FILE}")
@@ -58,14 +65,14 @@ def add_item(item):
                         (id, title, price, url, img_url, source)
                         VALUES (?, ?, ?, ?, ?, ?)''',
                      (item['id'], 
-                      item['title'][:500],  # ограничиваем длину
+                      item['title'][:500],
                       item['price'][:100],
                       item['url'][:1000],
                       item.get('img_url', '')[:500],
                       item['source']))
             
             conn.commit()
-            return c.rowcount > 0  # если вставилась хотя бы одна строка
+            return c.rowcount > 0
         except Exception as e:
             logger.error(f"❌ Ошибка добавления товара {item.get('id')}: {e}")
             return False
@@ -73,7 +80,55 @@ def add_item(item):
             if conn:
                 conn.close()
 
-# ==================== Массовое добавление (для оптимизации) ====================
+# ==================== Добавление товара с брендом ====================
+def add_item_with_brand(item, brand_main):
+    """
+    Добавляет товар в базу с указанием основного бренда
+    Возвращает True если товар новый, False если уже был.
+    """
+    with db_lock:
+        conn = None
+        try:
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            
+            # Проверяем, существует ли уже товар
+            c.execute("SELECT is_active FROM items WHERE id = ?", (item['id'],))
+            existing = c.fetchone()
+            
+            if existing:
+                # Товар уже есть, обновляем время проверки и статус
+                c.execute('''UPDATE items 
+                            SET last_checked = CURRENT_TIMESTAMP,
+                                is_active = 1,
+                                price = ?,
+                                title = ?
+                            WHERE id = ?''',
+                         (item['price'][:100], item['title'][:500], item['id']))
+                conn.commit()
+                return False
+            else:
+                # Новый товар
+                c.execute('''INSERT INTO items 
+                            (id, title, price, url, img_url, source, brand_main, is_active)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, 1)''',
+                         (item['id'], 
+                          item['title'][:500],
+                          item['price'][:100],
+                          item['url'][:1000],
+                          item.get('img_url', '')[:500],
+                          item['source'],
+                          brand_main))
+                conn.commit()
+                return True
+        except Exception as e:
+            logger.error(f"❌ Ошибка добавления товара {item.get('id')}: {e}")
+            return False
+        finally:
+            if conn:
+                conn.close()
+
+# ==================== Массовое добавление ====================
 def add_items_bulk(items):
     """
     Добавляет несколько товаров за раз (быстрее, чем по одному)
@@ -121,7 +176,7 @@ def load_all_items(limit=None, offset=None):
         conn = None
         try:
             conn = sqlite3.connect(DB_FILE)
-            conn.row_factory = sqlite3.Row  # чтобы возвращать как словари
+            conn.row_factory = sqlite3.Row
             c = conn.cursor()
             
             query = "SELECT * FROM items ORDER BY found_at DESC"
@@ -137,7 +192,6 @@ def load_all_items(limit=None, offset=None):
             c.execute(query, params)
             rows = c.fetchall()
             
-            # Преобразуем в список словарей
             return [dict(row) for row in rows]
         except Exception as e:
             logger.error(f"❌ Ошибка загрузки всех товаров: {e}")
@@ -158,7 +212,6 @@ def get_items_by_brand(brand, limit=100):
             conn.row_factory = sqlite3.Row
             c = conn.cursor()
             
-            # Используем LIKE для поиска по части названия (регистронезависимо)
             c.execute('''SELECT * FROM items 
                         WHERE title LIKE ? COLLATE NOCASE
                         ORDER BY found_at DESC
@@ -169,6 +222,89 @@ def get_items_by_brand(brand, limit=100):
             return [dict(row) for row in rows]
         except Exception as e:
             logger.error(f"❌ Ошибка поиска по бренду {brand}: {e}")
+            return []
+        finally:
+            if conn:
+                conn.close()
+
+# ==================== Получение товаров по основному бренду ====================
+def get_items_by_brand_main(brand_main, limit=50, include_sold=False):
+    """
+    Возвращает товары по основному бренду
+    include_sold=False - только активные (не проданные)
+    """
+    with db_lock:
+        conn = None
+        try:
+            conn = sqlite3.connect(DB_FILE)
+            conn.row_factory = sqlite3.Row
+            c = conn.cursor()
+            
+            if include_sold:
+                c.execute('''SELECT * FROM items 
+                            WHERE brand_main = ?
+                            ORDER BY found_at DESC
+                            LIMIT ?''',
+                         (brand_main, limit))
+            else:
+                c.execute('''SELECT * FROM items 
+                            WHERE brand_main = ? AND is_active = 1
+                            ORDER BY found_at DESC
+                            LIMIT ?''',
+                         (brand_main, limit))
+            
+            rows = c.fetchall()
+            return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error(f"❌ Ошибка получения товаров по бренду {brand_main}: {e}")
+            return []
+        finally:
+            if conn:
+                conn.close()
+
+# ==================== Получение статистики по брендам ====================
+def get_brands_stats():
+    """
+    Возвращает статистику по каждому бренду:
+    сколько всего найдено, сколько активных
+    """
+    with db_lock:
+        conn = None
+        try:
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            
+            c.execute('''SELECT brand_main, 
+                                COUNT(*) as total,
+                                SUM(is_active) as active
+                         FROM items 
+                         WHERE brand_main IS NOT NULL
+                         GROUP BY brand_main
+                         ORDER BY active DESC''')
+            
+            rows = c.fetchall()
+            return [{'brand': row[0], 'total': row[1], 'active': row[2]} for row in rows]
+        except Exception as e:
+            logger.error(f"❌ Ошибка получения статистики по брендам: {e}")
+            return []
+        finally:
+            if conn:
+                conn.close()
+
+# ==================== Получение всех брендов из базы ====================
+def get_all_brands_from_db():
+    """Возвращает список всех брендов, по которым есть товары"""
+    with db_lock:
+        conn = None
+        try:
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            c.execute('''SELECT DISTINCT brand_main FROM items 
+                        WHERE brand_main IS NOT NULL 
+                        ORDER BY brand_main''')
+            return [row[0] for row in c.fetchall()]
+        except Exception as e:
+            logger.error(f"❌ Ошибка получения списка брендов: {e}")
             return []
         finally:
             if conn:
@@ -200,7 +336,74 @@ def item_exists(item_id):
             if conn:
                 conn.close()
 
-# ==================== Удаление старых товаров (для экономии места) ====================
+# ==================== Проверка и обновление статуса товара ====================
+def check_item_status(item_id, is_active):
+    """
+    Обновляет статус товара (продан/активен)
+    Возвращает True если статус изменился
+    """
+    with db_lock:
+        conn = None
+        try:
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            c.execute('''UPDATE items 
+                        SET is_active = ?, last_checked = CURRENT_TIMESTAMP
+                        WHERE id = ?''',
+                     (1 if is_active else 0, item_id))
+            conn.commit()
+            return c.rowcount > 0
+        except Exception as e:
+            logger.error(f"❌ Ошибка обновления статуса {item_id}: {e}")
+            return False
+        finally:
+            if conn:
+                conn.close()
+
+# ==================== Автоматическая проверка проданных товаров ====================
+def check_sold_items(platform, items):
+    """
+    Проверяет список товаров и помечает как проданные те,
+    которые были в базе, но исчезли из поиска
+    """
+    with db_lock:
+        conn = None
+        try:
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            
+            # Получаем все активные товары с этой платформы
+            c.execute('''SELECT id, url FROM items 
+                        WHERE source = ? AND is_active = 1''', (platform,))
+            active_items = {row[0]: row[1] for row in c.fetchall()}
+            
+            # Собираем ID найденных товаров
+            found_ids = {item['id'] for item in items if 'id' in item}
+            
+            # Ищем, какие товары были активны, но не найдены сейчас
+            sold_ids = []
+            for item_id in active_items:
+                if item_id not in found_ids:
+                    sold_ids.append(item_id)
+            
+            # Помечаем их как проданные
+            if sold_ids:
+                placeholders = ','.join(['?'] * len(sold_ids))
+                c.execute(f'''UPDATE items 
+                            SET is_active = 0, last_checked = CURRENT_TIMESTAMP
+                            WHERE id IN ({placeholders})''', sold_ids)
+                conn.commit()
+                logger.info(f"💰 Отмечено как проданные: {len(sold_ids)} товаров")
+            
+            return len(sold_ids)
+        except Exception as e:
+            logger.error(f"❌ Ошибка проверки проданных товаров: {e}")
+            return 0
+        finally:
+            if conn:
+                conn.close()
+
+# ==================== Удаление старых товаров ====================
 def delete_old_items(days=30):
     """
     Удаляет товары старше указанного количества дней
