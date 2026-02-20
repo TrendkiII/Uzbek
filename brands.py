@@ -247,6 +247,9 @@ PLATFORM_LANGUAGES = {
 }
 
 def get_variations_for_platform(brand_main, platform):
+    """
+    Возвращает список всех вариаций бренда для конкретной платформы
+    """
     for group in BRAND_GROUPS:
         if group["main"] == brand_main:
             vars_list = []
@@ -258,6 +261,9 @@ def get_variations_for_platform(brand_main, platform):
     return [brand_main]
 
 def expand_selected_brands_for_platforms(selected_brands, platforms):
+    """
+    Возвращает словарь: {platform: [вариации выбранных брендов]}
+    """
     result = {}
     for p in platforms:
         vars_list = []
@@ -265,3 +271,31 @@ def expand_selected_brands_for_platforms(selected_brands, platforms):
             vars_list.extend(get_variations_for_platform(brand, p))
         result[p] = list(dict.fromkeys(vars_list))
     return result
+
+# ==================== НОВАЯ ФУНКЦИЯ ====================
+def get_main_brand_by_variation(variation):
+    """
+    Возвращает основное имя бренда по его вариации
+    Например: get_main_brand_by_variation("ルグランブルー") вернёт "L.G.B."
+    
+    Если вариация не найдена, возвращает None
+    """
+    if not variation:
+        return None
+    
+    variation_lower = variation.lower().strip()
+    
+    # Сначала ищем точное совпадение
+    for group in BRAND_GROUPS:
+        for typ in ['latin', 'jp', 'cn', 'universal']:
+            if typ in group['variations']:
+                for var in group['variations'][typ]:
+                    if var.lower().strip() == variation_lower:
+                        return group["main"]
+    
+    # Если точное не найдено, ищем частичное (вариация содержит основное имя)
+    for group in BRAND_GROUPS:
+        if group["main"].lower() in variation_lower:
+            return group["main"]
+    
+    return None

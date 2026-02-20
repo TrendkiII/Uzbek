@@ -129,7 +129,9 @@ async def deploy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     result = await deploy_changes()
     await update.message.reply_text(f"✅ Результат:\n\n{result[:3500]}")
 
-def run_deploy_bot():
+import asyncio
+
+async def run_deploy_bot_async():
     try:
         logger.info("🔄 Запуск бота-деплойера...")
         if not DEPLOY_BOT_TOKEN:
@@ -140,11 +142,26 @@ def run_deploy_bot():
         application.add_handler(CommandHandler("deploy", deploy_command))
         application.add_handler(CallbackQueryHandler(button_handler))
         logger.info("✅ Бот-деплойер запущен, начинаем polling")
-        application.run_polling()
+        await application.initialize()
+        await application.start()
+        await application.updater.start_polling()
+        
+        # Keep the bot running
+        while True:
+            await asyncio.sleep(3600)
+            
     except Exception as e:
-        logger.error(f"❌ Ошибка в боте-деплойере: {e}")
+        logger.error(f"❌ Ошибка в боте-деплойера: {e}")
         import traceback
         traceback.print_exc()
+
+def run_deploy_bot():
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(run_deploy_bot_async())
+    except Exception as e:
+        logger.error(f"❌ Критическая ошибка в потоке деплой-бота: {e}")
 
 if __name__ == "__main__":
     run_deploy_bot()
