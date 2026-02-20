@@ -108,7 +108,6 @@ def check_and_update_proxies(proxy_list=None):
     if proxy_list is PROXY_POOL or proxy_list == PROXY_POOL:
         with proxy_lock:
             PROXY_POOL[:] = working
-            # Очищаем множество bad_proxies, так как пул обновлён
             global bad_proxies
             bad_proxies.clear()
             save_proxies_to_file(PROXY_POOL)
@@ -144,6 +143,13 @@ def mark_proxy_bad(proxy_dict):
                 logger.warning(f"🗑 Прокси {p} помечен как неработающий")
                 break
 
+def mark_proxy_bad_str(proxy_str):
+    """Помечает прокси как нерабочий по строке (для асинхронного кода)"""
+    with proxy_lock:
+        if proxy_str in PROXY_POOL:
+            bad_proxies.add(proxy_str)
+            logger.warning(f"🗑 Прокси {proxy_str} помечен как неработающий (асинхронно)")
+
 def get_proxy_stats():
     with proxy_lock:
         return {
@@ -154,13 +160,13 @@ def get_proxy_stats():
             'requests_this_proxy': request_counter
         }
 
-# ================== Асинхронное получение прокси (НОВОЕ) ==================
+# ================== Асинхронное получение прокси ==================
 async def get_next_proxy_async():
     """Асинхронно возвращает следующий прокси из пула (с блокировкой)"""
+    global request_counter, current_proxy_index
     with proxy_lock:
         if not PROXY_POOL:
             return None
-        global request_counter, current_proxy_index
         available_proxies = [p for p in PROXY_POOL if p not in bad_proxies]
         if not available_proxies:
             logger.warning("⚠️ Нет доступных прокси для асинхронного запроса!")
@@ -170,20 +176,18 @@ async def get_next_proxy_async():
             request_counter = 0
         proxy_url = available_proxies[current_proxy_index]
         request_counter += 1
-        return proxy_url  # возвращаем строку, а не словарь, для aiohttp
+        return proxy_url
 
-# ================== Генерация ID (УЛУЧШЕНО) ==================
+# ================== Генерация ID ==================
 def normalize_url(url):
-    """Убирает query-параметры из URL для устранения дубликатов"""
     if not url:
         return url
     return url.split('?')[0]
 
 def generate_item_id(item):
-    """Генерирует уникальный ID на основе источника, нормализованного URL и названия"""
     source = item.get('source', '')
     url = normalize_url(item.get('url', ''))
-    title = item.get('title', '')[:100]  # ограничим длину для хеша
+    title = item.get('title', '')[:100]
     unique = f"{source}_{url}_{title}"
     return hashlib.md5(unique.encode('utf-8')).hexdigest()
 
@@ -274,4 +278,4 @@ def make_full_url(base, href):
     return urljoin(base, href)
 
 def encode_keyword(keyword):
-    return quote(keyword)
+    return quote(keyword)э

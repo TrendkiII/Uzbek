@@ -1,3 +1,4 @@
+import os
 import json
 import time
 import asyncio
@@ -14,7 +15,7 @@ from brands import BRAND_MAIN_NAMES, get_variations_for_platform, BRAND_GROUPS, 
 from scheduler import run_search, check_all_marketplaces
 from utils import (
     test_proxy, add_proxy_to_pool, check_and_update_proxies,
-    get_proxy_stats, init_proxy_pool
+    get_proxy_stats, init_proxy_pool, mark_proxy_bad_str
 )
 from database import (
     get_items_by_brand_main, get_brands_stats, check_item_status,
@@ -180,7 +181,6 @@ def build_brands_list(page=0):
     actions.append({"text": "◀️ Назад", "callback_data": "main_menu"})
     keyboard["inline_keyboard"].append(actions)
 
-    # Подсчёт вариаций (для информации)
     var_count = 0
     with state_lock:
         if BOT_STATE['selected_platforms'] and selected_brands:
@@ -355,7 +355,7 @@ def build_brands_stats():
         ]
     }
 
-# ==================== Обработчики callback'ов (диспетчер) ====================
+# ==================== Обработчики callback'ов ====================
 
 def handle_callback_main_menu(callback, chat_id):
     msg, kb = build_main_menu()
@@ -381,12 +381,10 @@ def handle_callback_stats(callback, chat_id):
     send_telegram_message(msg, keyboard=kb, chat_id=chat_id)
 
 def handle_callback_brands_list(callback, chat_id):
-    # page хранится в callback data, но для первого вызова page=0
     data = callback['data']
     if data == 'brands_list':
         page = 0
     else:
-        # формат: brands_page_X
         page = int(data.split('_')[-1])
     msg, kb = build_brands_list(page)
     send_telegram_message(msg, keyboard=kb, chat_id=chat_id)
@@ -428,13 +426,11 @@ def handle_callback_toggle_platform(callback, chat_id):
             BOT_STATE['selected_platforms'].remove(platform)
         else:
             BOT_STATE['selected_platforms'].append(platform)
-        # не меняем режим автоматически, пусть пользователь сам выбирает
     msg, kb = build_platforms_menu()
-    # редактируем предыдущее сообщение (упрощённо – отправляем новое)
     send_telegram_message(msg, keyboard=kb, chat_id=chat_id)
 
 def handle_callback_toggle_brand(callback, chat_id):
-    brand = callback['data'][7:]  # убираем 'toggle_'
+    brand = callback['data'][7:]
     with state_lock:
         if brand in BOT_STATE['selected_brands']:
             BOT_STATE['selected_brands'].remove(brand)
@@ -442,18 +438,15 @@ def handle_callback_toggle_brand(callback, chat_id):
         else:
             BOT_STATE['selected_brands'].append(brand)
             notification = f"✅ {brand} добавлен"
-        # Автоматически переключаем режим на manual, если есть бренды
         if BOT_STATE['selected_brands']:
             BOT_STATE['mode'] = 'manual'
         else:
             BOT_STATE['mode'] = 'auto'
     send_telegram_message(notification, chat_id=chat_id)
-    # Возвращаемся на страницу списка брендов (с текущей страницей, но проще page 0)
     msg, kb = build_brands_list(0)
     send_telegram_message(msg, keyboard=kb, chat_id=chat_id)
 
 def handle_callback_clear_all_confirm(callback, chat_id):
-    # Запрашиваем подтверждение
     keyboard = {
         "inline_keyboard": [
             [{"text": "✅ Да, очистить", "callback_data": "clear_all_yes"}],
@@ -480,6 +473,7 @@ def handle_callback_start_check(callback, chat_id):
     if BOT_STATE['is_checking']:
         send_telegram_message("⚠️ Проверка уже выполняется", chat_id=chat_id)
     else:
+        stop_event.clear()
         send_telegram_message("⏳ Запускаю обычный поиск...", chat_id=chat_id)
         Thread(target=check_all_marketplaces, args=(chat_id,)).start()
 
@@ -487,24 +481,22 @@ def handle_callback_start_super_turbo(callback, chat_id):
     if BOT_STATE['is_checking']:
         send_telegram_message("⚠️ Проверка уже выполняется", chat_id=chat_id)
         return
+    stop_event.clear()
     with state_lock:
         mode = BOT_STATE['mode']
         selected_brands = BOT_STATE['selected_brands'].copy()
         platforms = BOT_STATE['selected_platforms'].copy()
     if mode == 'auto':
-        # Все вариации из всех групп
         all_vars = []
         for group in BRAND_GROUPS:
             for typ in ['latin', 'jp', 'cn', 'universal']:
                 if typ in group['variations']:
                     all_vars.extend(group['variations'][typ])
-        keywords = list(set(all_vars))[:50]  # ограничим
+        keywords = list(set(all_vars))[:50]
     else:
         if not selected_brands:
             send_telegram_message("⚠️ В ручном режиме нужно выбрать бренды!", chat_id=chat_id)
             return
-        # Берём вариации для первой выбранной площадки (или для всех? лучше для всех, но тогда много ключей)
-        # Для простоты – для первой площадки
         if not platforms:
             send_telegram_message("⚠️ Не выбраны площадки!", chat_id=chat_id)
             return
@@ -560,12 +552,10 @@ def handle_callback_myitems_menu(callback, chat_id):
     send_telegram_message(msg, keyboard=kb, chat_id=chat_id)
 
 def handle_callback_myitems_brands(callback, chat_id):
-    # извлекаем страницу из callback, если есть
     data = callback['data']
     if data == 'myitems_brands':
         page = 0
     else:
-        # формат: itembrands_page_X
         page = int(data.split('_')[-1])
     msg, kb = build_brands_list_for_items(page)
     send_telegram_message(msg, keyboard=kb, chat_id=chat_id)
@@ -575,12 +565,11 @@ def handle_callback_myitems_stats(callback, chat_id):
     send_telegram_message(msg, keyboard=kb, chat_id=chat_id)
 
 def handle_callback_showbrand(callback, chat_id):
-    brand = callback['data'][10:]  # убираем 'showbrand_'
+    brand = callback['data'][10:]
     msg, kb = build_items_by_brand(brand, 0, show_sold=False)
     send_telegram_message(msg, keyboard=kb, chat_id=chat_id)
 
 def handle_callback_brandpage(callback, chat_id):
-    # формат: brandpage_{brand}_{page}_{show_sold}
     parts = callback['data'].split('_')
     brand = '_'.join(parts[1:-2])
     page = int(parts[-2])
@@ -589,12 +578,11 @@ def handle_callback_brandpage(callback, chat_id):
     send_telegram_message(msg, keyboard=kb, chat_id=chat_id)
 
 def handle_callback_checksold(callback, chat_id):
-    brand = callback['data'][10:]  # убираем 'checksold_'
+    brand = callback['data'][10:]
     send_telegram_message(f"🔄 Проверяю товары бренда {brand} на статус 'продан'...", chat_id=chat_id)
     Thread(target=check_sold_for_brand, args=(brand, chat_id)).start()
 
 def handle_callback_noop(callback, chat_id):
-    # ничего не делаем
     pass
 
 # Диспетчер callback'ов
@@ -626,7 +614,6 @@ CALLBACK_HANDLERS = {
     'noop': handle_callback_noop,
 }
 
-# Для обработчиков с префиксами (toggle_platform_, toggle_, int_, brands_page_, itembrands_page_, showbrand_, brandpage_, checksold_)
 PREFIX_HANDLERS = {
     'toggle_platform_': handle_callback_toggle_platform,
     'toggle_': handle_callback_toggle_brand,
@@ -666,21 +653,13 @@ def handle_message(update):
 
 # ==================== Функции для работы с прокси (асинхронные) ====================
 
-def add_proxies_from_list(proxies, chat_id):
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        loop.run_until_complete(async_check_proxies(proxies, chat_id))
-    finally:
-        loop.close()
-
 async def async_check_proxies(proxies, chat_id):
-    # упрощённая версия (можно использовать код из старого файла)
-    from utils import test_proxy
     working = []
     for i, proxy in enumerate(proxies, 1):
         send_telegram_message(f"⏳ Проверка {i}/{len(proxies)}: {proxy}", chat_id=chat_id)
-        ok = await asyncio.get_event_loop().run_in_executor(None, lambda: test_proxy(proxy)[1])
+        # запускаем синхронную test_proxy в executor
+        loop = asyncio.get_running_loop()
+        _, ok, _, _ = await loop.run_in_executor(None, test_proxy, proxy)
         if ok:
             working.append(proxy)
             add_proxy_to_pool(proxy)
@@ -688,7 +667,15 @@ async def async_check_proxies(proxies, chat_id):
         else:
             send_telegram_message(f"❌ {proxy} не работает", chat_id=chat_id)
     send_telegram_message(f"✅ Проверено. Рабочих: {len(working)}/{len(proxies)}", chat_id=chat_id)
-    send_proxy_menu(chat_id)  # импортируем? пока просто вызовем меню
+    send_proxy_menu(chat_id)
+
+def add_proxies_from_list(proxies, chat_id):
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(async_check_proxies(proxies, chat_id))
+    finally:
+        loop.close()
 
 def check_all_proxies(chat_id):
     working = check_and_update_proxies()
@@ -715,7 +702,6 @@ def check_sold_for_brand(brand, chat_id):
     items = get_items_by_brand_main(brand, limit=100, include_sold=False)
     if not items:
         send_telegram_message(f"❌ Нет активных товаров для бренда {brand}", chat_id=chat_id)
-        send_items_by_brand(brand, 0, chat_id)
         return
 
     send_telegram_message(f"🔄 Проверяю {len(items)} товаров бренда {brand}...", chat_id=chat_id)
@@ -737,7 +723,6 @@ def check_sold_for_brand(brand, chat_id):
             soup = BeautifulSoup(resp.text, 'lxml')
             is_sold = False
 
-            # Логика определения проданности (как в старом коде)
             if item['source'] == 'Mercari JP':
                 sold_indicators = soup.select('[class*="sold"], [class*="SOLD"], .item-sold, .sold-out')
                 if sold_indicators or "売り切れ" in resp.text:
@@ -751,7 +736,6 @@ def check_sold_for_brand(brand, chat_id):
             elif '2nd Street' in item['source']:
                 if "SOLD OUT" in resp.text or "売り切れ" in resp.text:
                     is_sold = True
-            # можно добавить другие площадки
 
             if is_sold:
                 check_item_status(item['id'], False)
@@ -773,7 +757,6 @@ def check_sold_for_brand(brand, chat_id):
         f"Всего проверено: {len(items)}"
     )
     send_telegram_message(msg, chat_id=chat_id)
-    # Показываем обновлённый список товаров (активные)
     msg, kb = build_items_by_brand(brand, 0, show_sold=False)
     send_telegram_message(msg, keyboard=kb, chat_id=chat_id)
 
@@ -796,8 +779,6 @@ def webhook():
 
 def handle_update(update):
     try:
-        # Сброс stop_event при любой команде? Нет, оставляем как есть.
-        # Проверка пользователя
         if 'callback_query' in update:
             user_id = update['callback_query']['from']['id']
         elif 'message' in update:
@@ -814,12 +795,10 @@ def handle_update(update):
             chat_id = q['from']['id']
             answer_callback(q['id'])
 
-            # Ищем обработчик
             handler = CALLBACK_HANDLERS.get(data)
             if handler:
                 handler(q, chat_id)
                 return
-            # Проверяем префиксные обработчики
             for prefix, h in PREFIX_HANDLERS.items():
                 if data.startswith(prefix):
                     h(q, chat_id)

@@ -5,15 +5,16 @@ from urllib.parse import quote
 from config import ITEMS_PER_PAGE, logger
 import time
 
-# Импортируем утилиты из общего модуля (без дублирования)
-from utils import generate_item_id, make_full_url, get_next_user_agent, get_next_proxy_async
+from utils import (
+    generate_item_id, make_full_url, get_next_user_agent,
+    get_next_proxy_async, mark_proxy_bad_str
+)
 
 async def fetch_html(session, url, semaphore, timeout=15, retries=3):
     """
     Асинхронно получает HTML страницы с поддержкой прокси и повторными попытками.
     """
     async with semaphore:
-        proxy = await get_next_proxy_async()  # получаем прокси (строку)
         headers = {
             'User-Agent': get_next_user_agent(),
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
@@ -23,8 +24,8 @@ async def fetch_html(session, url, semaphore, timeout=15, retries=3):
             'Upgrade-Insecure-Requests': '1'
         }
         for attempt in range(retries):
+            proxy = await get_next_proxy_async()  # получаем свежий прокси на каждую попытку
             try:
-                # Если прокси есть, передаём его в параметр proxy (aiohttp поддерживает строку)
                 async with session.get(url, headers=headers, proxy=proxy, timeout=timeout, ssl=False) as response:
                     if response.status == 200:
                         return await response.text()
@@ -37,7 +38,9 @@ async def fetch_html(session, url, semaphore, timeout=15, retries=3):
                 logger.warning(f"⏰ Таймаут (попытка {attempt+1}) для {url[:100]}...")
             except aiohttp.ClientProxyConnectionError as e:
                 logger.warning(f"🔌 Ошибка прокси {proxy} (попытка {attempt+1}): {e}")
-                # Прокси сбойный – в следующий раз возьмём другой (за счёт get_next_proxy_async)
+                if proxy:
+                    loop = asyncio.get_running_loop()
+                    await loop.run_in_executor(None, mark_proxy_bad_str, proxy)
             except aiohttp.ClientConnectorError as e:
                 logger.warning(f"🔌 Ошибка подключения (попытка {attempt+1}): {e}")
             except Exception as e:
@@ -47,12 +50,8 @@ async def fetch_html(session, url, semaphore, timeout=15, retries=3):
                 await asyncio.sleep(2 ** attempt)  # экспоненциальная задержка
         return None
 
-# ==================== Вспомогательная функция для извлечения данных из карточки (опционально) ====================
+# ==================== Вспомогательная функция для извлечения данных из карточки ====================
 def extract_item_from_card(card, source, base_url, title_sel, price_sel, link_sel='a', img_sel='img'):
-    """
-    Общая логика извлечения товара из карточки.
-    Возвращает словарь с полями title, price, url, img_url, source.
-    """
     try:
         title_elem = card.select_one(title_sel)
         price_elem = card.select_one(price_sel)
@@ -226,7 +225,6 @@ async def parse_rakuten_mall_async(session, keyword, semaphore):
     url = f"https://search.rakuten.co.jp/search/mall/{quote(keyword)}/?used=1"
     html = await fetch_html(session, url, semaphore)
     if not html:
-        # Пробуем альтернативный URL
         alt_url = f"https://search.rakuten.co.jp/search/mall/?v=2&p={quote(keyword)}&used=1"
         html = await fetch_html(session, alt_url, semaphore)
         if not html:
@@ -262,7 +260,6 @@ async def parse_ebay_async(session, keyword, semaphore):
         soup = BeautifulSoup(html, 'lxml')
         cards = soup.select('li.s-item')[:ITEMS_PER_PAGE]
         for card in cards:
-            # Для eBay особая проверка на "Shop on"
             title_elem = card.select_one('.s-item__title')
             if not title_elem or 'Shop on' in title_elem.text:
                 continue
@@ -276,7 +273,6 @@ async def parse_ebay_async(session, keyword, semaphore):
                 img_sel='.s-item__image-img'
             )
             if item_data:
-                # У eBay URL может содержать параметры, нормализуем уже в generate_item_id
                 item_data['id'] = generate_item_id(item_data)
                 items.append(item_data)
     except Exception as e:
@@ -324,19 +320,7 @@ ASYNC_PARSERS = {
 
 # ==================== ОСНОВНАЯ ФУНКЦИЯ ПОИСКА ====================
 async def search_all_async(keywords, platforms, max_concurrent=20):
-    """
-    Асинхронный поиск по всем платформам.
-    
-    Args:
-        keywords: список ключевых слов для поиска
-        platforms: список платформ для поиска
-        max_concurrent: максимальное количество одновременных запросов
-    
-    Returns:
-        список найденных товаров
-    """
     semaphore = asyncio.Semaphore(max_concurrent)
-    # Настраиваем коннектор с лимитами и отключаем SSL (для совместимости)
     connector = aiohttp.TCPConnector(limit=100, limit_per_host=10, ttl_dns_cache=300, ssl=False)
     timeout = aiohttp.ClientTimeout(total=30)
     
@@ -363,9 +347,6 @@ async def search_all_async(keywords, platforms, max_concurrent=20):
 
 # ==================== ФУНКЦИЯ ДЛЯ ЗАПУСКА ИЗ СИНХРОННОГО КОДА ====================
 def run_async_search(keywords, platforms, max_concurrent=20):
-    """
-    Запускает асинхронный поиск из синхронного кода.
-    """
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
