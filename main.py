@@ -14,24 +14,6 @@ def start_scheduler():
     scheduler_thread.start()
     logger.info("✅ Scheduler запущен в фоне")
 
-# ==================== Запуск бота-деплойера ====================
-def start_deploy_bot():
-    try:
-        if not os.environ.get("DEPLOY_BOT_TOKEN"):
-            logger.warning("⚠️ DEPLOY_BOT_TOKEN не установлен, бот-деплойер не запущен")
-            return
-        from deploy_bot import run_deploy_bot
-        deploy_thread = Thread(target=run_deploy_bot, daemon=True)
-        deploy_thread.start()
-        logger.info("✅ Deploy bot запущен в фоне")
-        time.sleep(2)
-        if deploy_thread.is_alive():
-            logger.info("✅ Deploy bot работает")
-        else:
-            logger.error("❌ Deploy bot умер сразу после запуска")
-    except Exception as e:
-        logger.error(f"❌ Не удалось запустить деплойер: {e}")
-
 # ==================== Установка вебхука ====================
 def setup_webhook():
     token = TELEGRAM_BOT_TOKEN
@@ -82,9 +64,8 @@ if __name__ == "__main__":
     except Exception as e:
         logger.error(f"❌ Ошибка инициализации прокси: {e}")
 
-    # Установка времени старта (безопасный способ)
+    # Установка времени старта
     try:
-        # Просто устанавливаем время, без использования блокировок
         BOT_STATE['start_time'] = time.time()
     except Exception as e:
         logger.error(f"❌ Ошибка установки времени старта: {e}")
@@ -95,8 +76,7 @@ if __name__ == "__main__":
     # Запуск планировщика (основной бот)
     start_scheduler()
 
-    # Запуск бота-деплойера (отдельный поток)
-    start_deploy_bot()
+    # 👇 ЭТУ СТРОКУ МЫ УДАЛИЛИ (start_deploy_bot больше не вызывается)
 
     # Получаем порт из окружения
     port = int(os.environ.get("PORT", 8080))
