@@ -9,7 +9,7 @@ from config import (
 )
 from brands import expand_selected_brands_for_platforms, BRAND_GROUPS
 from parsers import PARSERS
-from database import add_item
+from database import add_items_bulk, add_item
 from utils import (
     generate_item_id, human_delay, brand_delay,
     get_proxy_stats
@@ -17,16 +17,33 @@ from utils import (
 
 def process_new_items(items, platform):
     """Обрабатывает список товаров, сохраняет новые и возвращает их"""
-    new_items = []
+    if not items:
+        return []
+    
+    # Добавляем ID каждому товару
     for item in items:
         if 'id' not in item:
             item['id'] = generate_item_id(item)
-        if add_item(item):
-            new_items.append(item)
-            with state_lock:
-                if platform in BOT_STATE['stats']['platform_stats']:
-                    BOT_STATE['stats']['platform_stats'][platform]['finds'] += 1
-    return new_items
+    
+    # Массовое добавление в БД (быстрее)
+    new_count = add_items_bulk(items)
+    
+    # Обновляем статистику для новых товаров
+    if new_count > 0:
+        with state_lock:
+            if platform in BOT_STATE['stats']['platform_stats']:
+                BOT_STATE['stats']['platform_stats'][platform]['finds'] += new_count
+        
+        # Возвращаем только новые товары (для отправки)
+        # Находим их по наличию ID в БД
+        new_items = []
+        for item in items:
+            # Проверяем, действительно ли товар новый
+            if add_item(item):  # add_item вернёт True только для новых
+                new_items.append(item)
+        return new_items
+    
+    return []
 
 def check_platform(platform, variations, chat_id=None):
     """Парсит одну платформу по списку вариаций с маскировкой."""
@@ -98,6 +115,7 @@ def check_all_marketplaces(chat_id=None):
                     all_vars.extend(group['variations'][typ])
         all_vars = list(set(all_vars))
         random.shuffle(all_vars)
+        # В турбо-режиме проверяем больше вариаций
         vars_per_platform = {p: all_vars[:30] if turbo else all_vars[:20] for p in platforms}
     else:
         if not selected_brands:
@@ -135,6 +153,11 @@ def check_all_marketplaces(chat_id=None):
             )
             send_func(message, item.get('img_url'))
             time.sleep(0.5)
+    else:
+        if all_new_items:
+            logger.warning("⚠️ Функция отправки не найдена в BOT_STATE")
+        else:
+            logger.info("📭 Новых товаров не найдено")
 
     # Обновляем статистику
     with state_lock:

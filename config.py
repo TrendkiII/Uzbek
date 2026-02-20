@@ -50,8 +50,7 @@ REQUEST_TIMEOUT = 30
 MAX_RETRIES = 5
 RETRY_DELAY = 5
 ITEMS_PER_PAGE = 10
-MAX_WORKERS = 4
-FOUND_ITEMS_FILE = "found_items.json"
+MAX_WORKERS = 8
 PROXY_FILE = "proxies.json"
 
 # ==================== Настройки маскировки ====================
