@@ -127,7 +127,7 @@ def build_main_menu():
             [{"text": "📦 Мои находки", "callback_data": "myitems_menu"}],
             [{"text": "🔧 Управление прокси", "callback_data": "proxy_menu"}],
             [{"text": "⏹️ Остановить проверку", "callback_data": "stop_check"}],
-            [{"text": "⏸ Пауза / ▶️ Продолжить", "callback_data": "toggle_pause"}
+            [{"text": "⏸ Пауза / ▶️ Продолжить", "callback_data": "toggle_pause"}]
         ]
     }
     return msg, keyboard
@@ -657,7 +657,6 @@ async def async_check_proxies(proxies, chat_id):
     working = []
     for i, proxy in enumerate(proxies, 1):
         send_telegram_message(f"⏳ Проверка {i}/{len(proxies)}: {proxy}", chat_id=chat_id)
-        # запускаем синхронную test_proxy в executor
         loop = asyncio.get_running_loop()
         _, ok, _, _ = await loop.run_in_executor(None, test_proxy, proxy)
         if ok:
