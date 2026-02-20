@@ -91,19 +91,17 @@ def check_platform(platform, variations, chat_id=None):
     return platform_new_items
 
 def check_all_marketplaces(chat_id=None):
-    """
-    Основная функция проверки всех выбранных площадок.
-    """
     with state_lock:
-    BOT_STATE['stop_requested'] = False
-    if BOT_STATE['is_checking'] or BOT_STATE['paused']:
-        logger.warning("Проверка уже выполняется или бот на паузе")
-        return
-    BOT_STATE['is_checking'] = True
-    platforms = BOT_STATE['selected_platforms'].copy()
-    mode = BOT_STATE['mode']
-    selected_brands = BOT_STATE['selected_brands'].copy()
-    turbo = BOT_STATE.get('turbo_mode', False)
+        # Сбрасываем флаг остановки перед началом проверки
+        BOT_STATE['stop_requested'] = False
+        if BOT_STATE['is_checking'] or BOT_STATE['paused']:
+            logger.warning("Проверка уже выполняется или бот на паузе")
+            return
+        BOT_STATE['is_checking'] = True
+        platforms = BOT_STATE['selected_platforms'].copy()
+        mode = BOT_STATE['mode']
+        selected_brands = BOT_STATE['selected_brands'].copy()
+        turbo = BOT_STATE.get('turbo_mode', False)
 
 # ВРЕМЕННАЯ ЗАЩИТА: если есть выбранные бренды, режим должен быть manual
 if selected_brands and mode == 'auto':
