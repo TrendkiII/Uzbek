@@ -37,7 +37,7 @@ BOT_STATE = {
         "platform_stats": {platform: {"checks": 0, "finds": 0} for platform in ALL_PLATFORMS}
     },
     "send_to_telegram": None,
-    "awaiting_proxy": False  # для ожидания ввода прокси
+    "awaiting_proxy": False
 }
 
 # ==================== Telegram ====================
@@ -51,7 +51,7 @@ RETRY_DELAY = 5
 ITEMS_PER_PAGE = 10
 MAX_WORKERS = 4
 FOUND_ITEMS_FILE = "found_items.json"
-PROXY_FILE = "proxies.json"  # файл для хранения прокси
+PROXY_FILE = "proxies.json"
 
 # ==================== Настройки маскировки ====================
 MIN_DELAY_BETWEEN_REQUESTS = 2
@@ -61,7 +61,7 @@ MAX_DELAY_BETWEEN_BRANDS = 10
 REQUESTS_BEFORE_PROXY_CHANGE = 3
 
 # ==================== Прокси ====================
-PROXY_POOL = []  # будет загружаться из файла при старте
+PROXY_POOL = []
 USE_PROXY_POOL = True
 
 # ==================== User-Agent ====================

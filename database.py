@@ -3,7 +3,6 @@ from threading import Lock
 from config import FOUND_ITEMS_FILE, file_lock
 
 def init_db():
-    """Создает файл базы, если его нет"""
     with file_lock:
         try:
             with open(FOUND_ITEMS_FILE, "r", encoding="utf-8") as f:
@@ -13,7 +12,6 @@ def init_db():
                 json.dump({}, f)
 
 def load_all_items():
-    """Загружает все элементы из базы"""
     with file_lock:
         try:
             with open(FOUND_ITEMS_FILE, "r", encoding="utf-8") as f:
@@ -22,16 +20,11 @@ def load_all_items():
             return {}
 
 def save_all_items(data):
-    """Сохраняет все элементы в базу"""
     with file_lock:
         with open(FOUND_ITEMS_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
 
 def add_item(item):
-    """
-    Добавляет товар в базу, если его там ещё нет.
-    Возвращает True если товар новый.
-    """
     data = load_all_items()
     if item['id'] in data:
         return False

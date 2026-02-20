@@ -38,7 +38,6 @@ current_proxy_index = 0
 bad_proxies = set()
 
 def load_proxies_from_file():
-    """Загружает список прокси из файла"""
     try:
         with open(PROXY_FILE, 'r') as f:
             return json.load(f)
@@ -46,19 +45,16 @@ def load_proxies_from_file():
         return []
 
 def save_proxies_to_file(proxies):
-    """Сохраняет список прокси в файл"""
     with open(PROXY_FILE, 'w') as f:
         json.dump(proxies, f, indent=2)
 
 def init_proxy_pool():
-    """Инициализирует PROXY_POOL из файла при старте"""
     global PROXY_POOL
     with proxy_lock:
         PROXY_POOL = load_proxies_from_file()
         logger.info(f"📦 Загружено {len(PROXY_POOL)} прокси из файла")
 
 def add_proxy_to_pool(proxy_url):
-    """Добавляет прокси в пул и сохраняет в файл"""
     with proxy_lock:
         if proxy_url not in PROXY_POOL:
             PROXY_POOL.append(proxy_url)
@@ -68,7 +64,6 @@ def add_proxy_to_pool(proxy_url):
     return False
 
 def remove_proxy_from_pool(proxy_url):
-    """Удаляет прокси из пула и сохраняет"""
     with proxy_lock:
         if proxy_url in PROXY_POOL:
             PROXY_POOL.remove(proxy_url)
@@ -78,7 +73,6 @@ def remove_proxy_from_pool(proxy_url):
     return False
 
 def test_proxy(proxy_url):
-    """Проверяет работоспособность одного прокси"""
     proxies = {'http': proxy_url, 'https': proxy_url}
     try:
         start = time.time()
@@ -91,10 +85,6 @@ def test_proxy(proxy_url):
     return proxy_url, False, None, None
 
 def check_and_update_proxies(proxy_list=None):
-    """
-    Проверяет список прокси (если None – проверяет текущий PROXY_POOL),
-    возвращает рабочие и обновляет файл, удаляя нерабочие.
-    """
     if proxy_list is None:
         with proxy_lock:
             proxy_list = PROXY_POOL.copy()
@@ -113,7 +103,6 @@ def check_and_update_proxies(proxy_list=None):
             else:
                 logger.warning(f"❌ {proxy} не работает")
     
-    # Обновляем пул и файл, если проверяли текущий пул
     if proxy_list is PROXY_POOL or proxy_list == PROXY_POOL:
         with proxy_lock:
             PROXY_POOL[:] = working
@@ -122,39 +111,26 @@ def check_and_update_proxies(proxy_list=None):
     return working
 
 def get_next_proxy():
-    """Ротация прокси с учётом работающих"""
     if not USE_PROXY_POOL or not PROXY_POOL:
         return None
     
     with proxy_lock:
         global request_counter, current_proxy_index
-        
-        # Фильтруем только хорошие прокси
         available_proxies = [p for p in PROXY_POOL if p not in bad_proxies]
-        
         if not available_proxies:
             logger.warning("⚠️ Нет доступных прокси!")
             return None
-        
-        # Смена прокси каждые N запросов
         if request_counter >= REQUESTS_BEFORE_PROXY_CHANGE:
             current_proxy_index = (current_proxy_index + 1) % len(available_proxies)
             request_counter = 0
             logger.info(f"🔄 Смена прокси на {available_proxies[current_proxy_index]}")
-        
         proxy_url = available_proxies[current_proxy_index]
         request_counter += 1
-        
-        return {
-            'http': proxy_url,
-            'https': proxy_url
-        }
+        return {'http': proxy_url, 'https': proxy_url}
 
 def mark_proxy_bad(proxy_dict):
-    """Помечает прокси как неработающий"""
     if not proxy_dict:
         return
-    
     with proxy_lock:
         for p in PROXY_POOL:
             proxy_url = proxy_dict.get('http', '')
@@ -217,7 +193,6 @@ def make_request(url, headers=None, timeout=REQUEST_TIMEOUT, retries=MAX_RETRIES
         
         try:
             logger.debug(f"🌐 Запрос {url[:100]}... через {proxies.get('http') if proxies else 'без прокси'}")
-            
             r = requests.get(
                 url, 
                 headers=headers, 

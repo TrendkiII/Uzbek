@@ -8,10 +8,10 @@ from config import (
     BOT_STATE, state_lock, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID,
     logger, ALL_PLATFORMS, PROXY_POOL
 )
-from brands import BRAND_MAIN_NAMES, POPULAR_BRANDS, get_variations_for_platform
+from brands import BRAND_MAIN_NAMES, get_variations_for_platform
 from parsers import PARSERS
 from utils import (
-    generate_item_id, test_proxy, add_proxy_to_pool, 
+    generate_item_id, test_proxy, add_proxy_to_pool,
     check_and_update_proxies, get_proxy_stats
 )
 
@@ -81,7 +81,7 @@ def send_telegram_album(media_group, chat_id=None):
 
 def send_main_menu(chat_id=None):
     turbo_status = "🐱‍🏍 ТУРБО" if BOT_STATE.get('turbo_mode') else "🐢 Обычный"
-    
+
     keyboard = {
         "inline_keyboard": [
             [{"text": "🚀 Запустить проверку", "callback_data": "start_check"}],
@@ -162,7 +162,6 @@ def send_brands_list(page=0, chat_id=None):
     actions.append({"text": "◀️ Назад", "callback_data": "main_menu"})
     keyboard["inline_keyboard"].append(actions)
 
-    # Подсчёт вариаций для первой платформы
     var_count = 0
     if BOT_STATE['selected_platforms']:
         with state_lock:
@@ -180,9 +179,6 @@ def send_select_brands_menu(chat_id=None):
         selected = len(BOT_STATE['selected_brands'])
     keyboard = {
         "inline_keyboard": [
-            [{"text": "✅ Популярные (10)", "callback_data": "select_popular"}],
-            [{"text": "🎲 Случайные 5", "callback_data": "random_5"}],
-            [{"text": "🎲 Случайные 10", "callback_data": "random_10"}],
             [{"text": "📋 Выбрать из списка", "callback_data": "brands_list"}],
             [{"text": "❌ Очистить все", "callback_data": "clear_all"}],
             [{"text": "◀️ Назад", "callback_data": "main_menu"}]
@@ -249,7 +245,6 @@ def send_proxy_menu(chat_id=None):
 
 # ==================== Фоновые задачи для прокси ====================
 def add_proxies_from_list(proxies, chat_id):
-    """Проверяет список прокси и добавляет рабочие в пул"""
     working = []
     total = len(proxies)
     for i, proxy in enumerate(proxies, 1):
@@ -261,7 +256,7 @@ def add_proxies_from_list(proxies, chat_id):
             send_telegram_message(f"✅ {proxy} работает (IP: {ip}, {speed}с)", chat_id=chat_id)
         else:
             send_telegram_message(f"❌ {proxy} не работает", chat_id=chat_id)
-    
+
     if working:
         msg = f"🎉 Добавлено {len(working)} рабочих прокси"
     else:
@@ -270,7 +265,6 @@ def add_proxies_from_list(proxies, chat_id):
     send_proxy_menu(chat_id)
 
 def check_all_proxies(chat_id):
-    """Проверяет все прокси в текущем пуле и удаляет нерабочие"""
     send_telegram_message("🔄 Начинаю полную проверку пула прокси...", chat_id=chat_id)
     working = check_and_update_proxies()
     msg = f"✅ Проверка завершена. Рабочих прокси: {len(working)}"
@@ -278,7 +272,6 @@ def check_all_proxies(chat_id):
     send_proxy_menu(chat_id)
 
 def clean_proxies(chat_id):
-    """Удаляет нерабочие прокси"""
     send_telegram_message("🧹 Очистка нерабочих прокси...", chat_id=chat_id)
     working = check_and_update_proxies()
     msg = f"✅ Осталось рабочих прокси: {len(working)}"
@@ -286,29 +279,21 @@ def clean_proxies(chat_id):
     send_proxy_menu(chat_id)
 
 # ==================== Вебхуки и маршруты ====================
-
-@app.route('/health')
+@app.route('/health', methods=['GET'])
 def health():
-    """Простой эндпоинт для проверки работы сервера"""
     return "OK", 200
 
-@app.route('/', methods=['GET', 'POST'])
-def webhook():
-    if request.method == 'POST':
-        Thread(target=handle_update, args=(request.json,)).start()
-        return 'OK', 200
-    return home()
-
-@app.route('/')
+@app.route('/', methods=['GET'])
 def home():
-    with state_lock:
-        uptime = int(time.time() - BOT_STATE.get('start_time', time.time()))
-        return f"Бот активен. Аптайм: {uptime} сек. Найдено: {BOT_STATE['stats']['total_finds']}"
+    return "Bot is alive", 200
+
+@app.route('/', methods=['POST'])
+def webhook():
+    Thread(target=handle_update, args=(request.json,)).start()
+    return 'OK', 200
 
 # ==================== Обработчик обновлений ====================
-
 def handle_update(update):
-    """Обрабатывает входящее обновление от Telegram."""
     try:
         if 'callback_query' in update:
             q = update['callback_query']
@@ -365,6 +350,7 @@ def handle_update(update):
                         BOT_STATE['selected_platforms'].remove(platform)
                     else:
                         BOT_STATE['selected_platforms'].append(platform)
+                    BOT_STATE['mode'] = 'manual'
                 send_platforms_menu(chat_id)
             elif data.startswith('page_'):
                 page = int(data.split('_')[1])
@@ -378,35 +364,15 @@ def handle_update(update):
                     else:
                         BOT_STATE['selected_brands'].append(brand)
                         send_telegram_message(f"✅ {brand} добавлен", chat_id=chat_id)
+                    if BOT_STATE['selected_brands']:
+                        BOT_STATE['mode'] = 'manual'
+                    else:
+                        BOT_STATE['mode'] = 'auto'
                 send_brands_list(0, chat_id)
-            elif data == 'select_popular':
-                with state_lock:
-                    BOT_STATE['selected_brands'] = POPULAR_BRANDS.copy()
-                send_telegram_message(f"✅ {len(POPULAR_BRANDS)} популярных брендов", chat_id=chat_id)
-                send_select_brands_menu(chat_id)
-            elif data == 'random_5':
-                import random
-                if len(BRAND_MAIN_NAMES) >= 5:
-                    rnd = random.sample(BRAND_MAIN_NAMES, 5)
-                    with state_lock:
-                        BOT_STATE['selected_brands'] = rnd
-                    send_telegram_message("✅ 5 случайных брендов", chat_id=chat_id)
-                    send_select_brands_menu(chat_id)
-                else:
-                    send_telegram_message("⚠️ В базе менее 5 брендов", chat_id=chat_id)
-            elif data == 'random_10':
-                import random
-                if len(BRAND_MAIN_NAMES) >= 10:
-                    rnd = random.sample(BRAND_MAIN_NAMES, 10)
-                    with state_lock:
-                        BOT_STATE['selected_brands'] = rnd
-                    send_telegram_message("✅ 10 случайных брендов", chat_id=chat_id)
-                    send_select_brands_menu(chat_id)
-                else:
-                    send_telegram_message("⚠️ В базе менее 10 брендов", chat_id=chat_id)
             elif data == 'clear_all':
                 with state_lock:
                     BOT_STATE['selected_brands'] = []
+                    BOT_STATE['mode'] = 'auto'
                 send_telegram_message("🗑 Список очищен", chat_id=chat_id)
                 send_select_brands_menu(chat_id)
             elif data.startswith('int_'):
@@ -421,18 +387,16 @@ def handle_update(update):
                 else:
                     from scheduler import check_all_marketplaces
                     Thread(target=check_all_marketplaces).start()
-            
-            # Новые обработчики для прокси
             elif data == 'proxy_menu':
                 send_proxy_menu(chat_id)
             elif data == 'proxy_add':
                 send_telegram_message("📝 Отправьте список прокси (каждый с новой строки).\n"
-                                      "Формат: protocol://ip:port (например, http://123.45.67.89:8080 или socks5://...)", 
+                                      "Формат: protocol://ip:port (например, http://123.45.67.89:8080 или socks5://...)",
                                       chat_id=chat_id)
                 with state_lock:
                     BOT_STATE['awaiting_proxy'] = True
             elif data == 'proxy_check':
-                send_telegram_message("🔄 Проверка прокси, это может занять некоторое время...", chat_id=chat_id)
+                send_telegram_message("🔄 Проверка прокси...", chat_id=chat_id)
                 Thread(target=check_all_proxies, args=(chat_id,)).start()
             elif data == 'proxy_stats':
                 stats = get_proxy_stats()
@@ -447,32 +411,25 @@ def handle_update(update):
             elif data == 'proxy_clean':
                 send_telegram_message("🧹 Очистка нерабочих прокси...", chat_id=chat_id)
                 Thread(target=clean_proxies, args=(chat_id,)).start()
-                
         elif 'message' in update:
             chat_id = update['message']['chat']['id']
             text = update['message'].get('text', '')
-            
-            # Проверяем, не ожидаем ли мы ввод прокси
+
             with state_lock:
                 awaiting = BOT_STATE.get('awaiting_proxy', False)
-            
+
             if awaiting:
-                # Сбрасываем флаг
                 with state_lock:
                     BOT_STATE['awaiting_proxy'] = False
-                
-                # Разбираем список прокси
                 lines = text.strip().split('\n')
                 proxies = [line.strip() for line in lines if line.strip()]
-                
                 if not proxies:
                     send_telegram_message("❌ Список пуст. Попробуйте снова.", chat_id=chat_id)
                 else:
                     send_telegram_message(f"🔍 Проверяю {len(proxies)} прокси...", chat_id=chat_id)
                     Thread(target=add_proxies_from_list, args=(proxies, chat_id)).start()
                 return
-            
-            # Обработка обычных команд
+
             if text == '/start':
                 send_main_menu(chat_id)
             else:

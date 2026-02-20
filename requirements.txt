@@ -5,4 +5,5 @@ schedule
 fake-useragent
 lxml
 python-dotenv
+python-telegram-bot==20.7
 telegram
