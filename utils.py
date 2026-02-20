@@ -278,4 +278,4 @@ def make_full_url(base, href):
     return urljoin(base, href)
 
 def encode_keyword(keyword):
-    return quote(keyword)э
+    return quote(keyword)
