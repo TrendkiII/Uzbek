@@ -3,6 +3,8 @@ import time
 import requests
 from threading import Thread
 from flask import Flask, request
+import asyncio
+import aiohttp
 
 from config import (
     BOT_STATE, state_lock, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID,
@@ -16,24 +18,6 @@ from utils import (
 )
 
 app = Flask(__name__)
-
-# ==================== ПРОСТЫЕ МАРШРУТЫ ДЛЯ HEALTHCHECK ====================
-@app.route('/health', methods=['GET'])
-def health():
-    """Максимально быстрый ответ для healthcheck"""
-    return 'OK', 200
-
-@app.route('/', methods=['GET'])
-def home():
-    """Главная страница – быстрый ответ"""
-    return 'Bot is alive', 200
-
-# ==================== ОСНОВНОЙ ВЕБХУК ====================
-@app.route('/', methods=['POST'])
-def webhook():
-    """Только POST от Telegram"""
-    Thread(target=handle_update, args=(request.json,)).start()
-    return 'OK', 200
 
 # ==================== Функции отправки ====================
 def send_telegram_message(text, photo_url=None, keyboard=None, chat_id=None):
@@ -96,6 +80,7 @@ def send_telegram_album(media_group, chat_id=None):
         return False
 
 # ==================== Функции меню ====================
+
 def send_main_menu(chat_id=None):
     turbo_status = "🐱‍🏍 ТУРБО" if BOT_STATE.get('turbo_mode') else "🐢 Обычный"
     
@@ -260,40 +245,130 @@ def send_proxy_menu(chat_id=None):
     msg = f"🔧 Управление прокси\n\nВсего в пуле: {proxy_count}"
     send_telegram_message(msg, keyboard=keyboard, chat_id=chat_id)
 
-# ==================== Фоновые задачи для прокси ====================
-def add_proxies_from_list(proxies, chat_id):
-    working = []
-    total = len(proxies)
-    for i, proxy in enumerate(proxies, 1):
-        send_telegram_message(f"⏳ Проверка {i}/{total}: {proxy}", chat_id=chat_id)
-        proxy_url, ok, ip, speed = test_proxy(proxy)
-        if ok:
-            add_proxy_to_pool(proxy_url)
-            working.append(proxy_url)
-            send_telegram_message(f"✅ {proxy} работает (IP: {ip}, {speed}с)", chat_id=chat_id)
-        else:
-            send_telegram_message(f"❌ {proxy} не работает", chat_id=chat_id)
+# ==================== АСИНХРОННЫЕ ФУНКЦИИ ДЛЯ ПРОВЕРКИ ПРОКСИ ====================
+async def check_proxy_async(session, proxy, semaphore):
+    """Проверяет один прокси асинхронно с ограничением параллельных запросов"""
+    async with semaphore:
+        try:
+            if proxy.startswith(('http://', 'https://', 'socks5://')):
+                proxy_url = proxy
+                display_proxy = proxy
+            else:
+                proxy_url = f'http://{proxy}'
+                display_proxy = proxy
+            
+            start = time.time()
+            async with session.get('http://httpbin.org/ip', 
+                                  proxy=proxy_url, 
+                                  timeout=5) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    elapsed = time.time() - start
+                    return proxy, True, data.get('origin'), round(elapsed, 2)
+        except Exception:
+            pass
+    return proxy, False, None, None
 
-    if working:
-        msg = f"🎉 Добавлено {len(working)} рабочих прокси"
-    else:
-        msg = "❌ Ни одного рабочего прокси не найдено"
-    send_telegram_message(msg, chat_id=chat_id)
+async def async_send_message(chat_id, text):
+    """Обёртка для отправки сообщения из асинхронного кода"""
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, send_telegram_message, text, None, None, chat_id)
+
+async def process_proxy_batch(batch, chat_id, batch_num, total_batches):
+    """Обрабатывает один батч прокси"""
+    working = []
+    conn = aiohttp.TCPConnector(limit=50, limit_per_host=10, ttl_dns_cache=300)
+    timeout = aiohttp.ClientTimeout(total=5)
+    semaphore = asyncio.Semaphore(50)
+    
+    await async_send_message(chat_id, f"📦 Проверяю батч {batch_num}/{total_batches} ({len(batch)} прокси)...")
+    
+    async with aiohttp.ClientSession(connector=conn, timeout=timeout) as session:
+        tasks = []
+        for proxy in batch:
+            task = check_proxy_async(session, proxy, semaphore)
+            tasks.append(task)
+        
+        for i, task in enumerate(asyncio.as_completed(tasks), 1):
+            proxy, ok, ip, speed = await task
+            if ok:
+                working.append(proxy)
+                await async_send_message(chat_id, f"✅ {i}/{len(batch)}: {proxy} работает (IP: {ip}, {speed}с)")
+                add_proxy_to_pool(proxy)
+            else:
+                await async_send_message(chat_id, f"❌ {i}/{len(batch)}: {proxy} не работает")
+    
+    return working
+
+async def async_check_proxies(proxies, chat_id):
+    """Главная асинхронная функция проверки прокси"""
+    start_time = time.time()
+    
+    await async_send_message(chat_id, 
+        f"🔄 Начинаю асинхронную проверку {len(proxies)} прокси...\n"
+        f"⚡ Результаты будут появляться по мере проверки."
+    )
+    
+    batch_size = 50
+    all_working = []
+    total_batches = (len(proxies) + batch_size - 1) // batch_size
+    
+    for i in range(0, len(proxies), batch_size):
+        batch = proxies[i:i+batch_size]
+        batch_num = i//batch_size + 1
+        working = await process_proxy_batch(batch, chat_id, batch_num, total_batches)
+        all_working.extend(working)
+    
+    elapsed = time.time() - start_time
+    await async_send_message(chat_id, 
+        f"🎉 Асинхронная проверка завершена за {elapsed:.1f}с!\n"
+        f"✅ Рабочих прокси: {len(all_working)}/{len(proxies)}\n"
+        f"📊 Процент успеха: {len(all_working)/len(proxies)*100:.1f}%"
+    )
     send_proxy_menu(chat_id)
 
+def add_proxies_from_list(proxies, chat_id):
+    """Запускает асинхронную проверку прокси в отдельном потоке"""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(async_check_proxies(proxies, chat_id))
+    finally:
+        loop.close()
+
 def check_all_proxies(chat_id):
-    send_telegram_message("🔄 Начинаю полную проверку пула прокси...", chat_id=chat_id)
+    """Проверяет все прокси в текущем пуле"""
+    with state_lock:
+        proxies = PROXY_POOL.copy()
+    if not proxies:
+        send_telegram_message("❌ Пул прокси пуст", chat_id=chat_id)
+        send_proxy_menu(chat_id)
+        return
+    send_telegram_message(f"🔄 Начинаю проверку всех {len(proxies)} прокси в пуле...", chat_id=chat_id)
     working = check_and_update_proxies()
-    msg = f"✅ Проверка завершена. Рабочих прокси: {len(working)}"
-    send_telegram_message(msg, chat_id=chat_id)
+    send_telegram_message(f"✅ Проверка завершена. Рабочих прокси: {len(working)}", chat_id=chat_id)
     send_proxy_menu(chat_id)
 
 def clean_proxies(chat_id):
+    """Удаляет нерабочие прокси"""
     send_telegram_message("🧹 Очистка нерабочих прокси...", chat_id=chat_id)
     working = check_and_update_proxies()
-    msg = f"✅ Осталось рабочих прокси: {len(working)}"
-    send_telegram_message(msg, chat_id=chat_id)
+    send_telegram_message(f"✅ Осталось рабочих прокси: {len(working)}", chat_id=chat_id)
     send_proxy_menu(chat_id)
+
+# ==================== Вебхуки и маршруты ====================
+@app.route('/health', methods=['GET'])
+def health():
+    return "OK", 200
+
+@app.route('/', methods=['GET'])
+def home():
+    return "Bot is alive", 200
+
+@app.route('/', methods=['POST'])
+def webhook():
+    Thread(target=handle_update, args=(request.json,)).start()
+    return 'OK', 200
 
 # ==================== Обработчик обновлений ====================
 def handle_update(update):
