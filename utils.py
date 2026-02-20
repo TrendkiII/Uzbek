@@ -7,6 +7,9 @@ import json
 from urllib.parse import urljoin, quote
 from bs4 import BeautifulSoup
 from fake_useragent import UserAgent
+from threading import Lock
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 from config import (
     PROXY_POOL, USE_PROXY_POOL, proxy_lock, PROXY_FILE,
     REQUEST_TIMEOUT, MAX_RETRIES, RETRY_DELAY,
@@ -15,7 +18,6 @@ from config import (
     MIN_DELAY_BETWEEN_BRANDS, MAX_DELAY_BETWEEN_BRANDS,
     REQUESTS_BEFORE_PROXY_CHANGE
 )
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = logging.getLogger(__name__)
 
