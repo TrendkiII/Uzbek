@@ -173,10 +173,10 @@ def check_all_marketplaces(chat_id=None):
     proxy_stats = get_proxy_stats()
     logger.info(f"📊 Итоговая статистика прокси: всего {proxy_stats['total']}, рабочих {proxy_stats['good']}")
 
-# ==================== НОВАЯ ФУНКЦИЯ ДЛЯ СУПЕР-ТУРБО ====================
+# ==================== НОВАЯ ФУНКЦИЯ ДЛЯ СУПЕР-ТУРБО С ОТЛАДКОЙ ====================
 def run_super_turbo_search(keywords, platforms, chat_id=None):
     """
-    Запускает супер-быстрый асинхронный поиск
+    Запускает супер-быстрый асинхронный поиск с отладкой
     """
     logger.info(f"⚡ Запуск супер-турбо поиска для {len(keywords)} ключей на {len(platforms)} площадках")
     
@@ -190,11 +190,27 @@ def run_super_turbo_search(keywords, platforms, chat_id=None):
             send_func("📭 Товаров не найдено", chat_id=chat_id)
         return []
     
+    # ========== ОТЛАДКА: смотрим первые 10 товаров ==========
+    logger.info(f"📊 Получено {len(items)} товаров. Анализируем первые 10:")
+    for i, item in enumerate(items[:10]):
+        brand_main = get_main_brand_by_variation(item.get('title', ''))
+        logger.info(f"🔍 Товар {i+1}:")
+        logger.info(f"   📝 Название: {item.get('title', '')[:100]}")
+        logger.info(f"   🏷 Определенный бренд: {brand_main}")
+        logger.info(f"   🔗 Источник: {item.get('source', '')}")
+        logger.info(f"   💰 Цена: {item.get('price', '')}")
+        logger.info(f"   🆔 ID: {item.get('id', 'НЕТ ID!')}")
+    # ======================================================
+    
     # Обработка результатов
     new_items = []
+    brands_found = set()
+    
     for item in items:
         # Определяем бренд из названия
         brand_main = get_main_brand_by_variation(item.get('title', ''))
+        if brand_main:
+            brands_found.add(brand_main)
         
         # Сохраняем в базу
         if add_item_with_brand(item, brand_main):
@@ -202,6 +218,9 @@ def run_super_turbo_search(keywords, platforms, chat_id=None):
             with state_lock:
                 if item['source'] in BOT_STATE['stats']['platform_stats']:
                     BOT_STATE['stats']['platform_stats'][item['source']]['finds'] += 1
+    
+    # Логируем статистику по брендам
+    logger.info(f"📊 Найдены бренды: {', '.join(brands_found) if brands_found else 'НИ ОДНОГО БРЕНДА НЕ ОПРЕДЕЛЕНО!'}")
     
     # Отправка уведомлений
     send_func = BOT_STATE.get('send_to_telegram')
@@ -219,12 +238,21 @@ def run_super_turbo_search(keywords, platforms, chat_id=None):
     else:
         if new_items:
             logger.warning("⚠️ Функция отправки не найдена в BOT_STATE")
+        else:
+            logger.info("📭 Новых товаров не найдено")
     
     logger.info(f"✅ Супер-турбо поиск завершен. Новых товаров: {len(new_items)}")
+    logger.info(f"📊 Всего обработано товаров: {len(items)}")
     
     # Отправляем итоговое сообщение
     if send_func:
-        send_func(f"⚡ Супер-турбо поиск завершен! Найдено новых товаров: {len(new_items)}", chat_id=chat_id)
+        send_func(
+            f"⚡ Супер-турбо поиск завершен!\n"
+            f"📊 Найдено товаров: {len(items)}\n"
+            f"🆕 Новых: {len(new_items)}\n"
+            f"🏷 Брендов: {len(brands_found)}",
+            chat_id=chat_id
+        )
     
     return new_items
 

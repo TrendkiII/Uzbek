@@ -4,6 +4,7 @@ from bs4 import BeautifulSoup
 from urllib.parse import quote, urljoin
 from config import ITEMS_PER_PAGE, logger
 import time
+from utils import generate_item_id  # ДОБАВЛЕН ИМПОРТ
 
 async def fetch_html(session, url, semaphore, timeout=10):
     """Асинхронно получает HTML страницы"""
@@ -80,13 +81,16 @@ async def parse_mercari_async(session, keyword, semaphore):
                 href = link_elem.get('href')
                 full_url = make_full_url('https://jp.mercari.com', href)
                 
-                items.append({
+                item = {
                     'title': title[:100],
                     'price': price[:50],
                     'url': full_url,
                     'img_url': img_url,
                     'source': 'Mercari JP'
-                })
+                }
+                # ДОБАВЛЯЕМ ID
+                item['id'] = generate_item_id(item)
+                items.append(item)
             except Exception as e:
                 logger.debug(f"Ошибка парсинга карточки Mercari: {e}")
                 continue
@@ -131,13 +135,16 @@ async def parse_rakuma_async(session, keyword, semaphore):
                 href = link_elem.get('href')
                 full_url = make_full_url('https://fril.jp', href)
                 
-                items.append({
+                item = {
                     'title': title[:100],
                     'price': price[:50],
                     'url': full_url,
                     'img_url': img_url,
                     'source': 'Rakuten Rakuma'
-                })
+                }
+                # ДОБАВЛЯЕМ ID
+                item['id'] = generate_item_id(item)
+                items.append(item)
             except Exception as e:
                 logger.debug(f"Ошибка парсинга Rakuma: {e}")
                 continue
@@ -182,13 +189,16 @@ async def parse_yahoo_flea_async(session, keyword, semaphore):
                 href = link_elem.get('href') if link_elem else ''
                 full_url = make_full_url('https://paypayfleamarket.yahoo.co.jp', href)
                 
-                items.append({
+                item = {
                     'title': title[:100],
                     'price': price[:50],
                     'url': full_url,
                     'img_url': img_url,
                     'source': 'Yahoo Flea'
-                })
+                }
+                # ДОБАВЛЯЕМ ID
+                item['id'] = generate_item_id(item)
+                items.append(item)
             except Exception as e:
                 logger.debug(f"Ошибка парсинга Yahoo Flea: {e}")
                 continue
@@ -233,13 +243,16 @@ async def parse_yahoo_auction_async(session, keyword, semaphore):
                 href = link_elem.get('href') if link_elem else ''
                 full_url = make_full_url('https://auctions.yahoo.co.jp', href)
                 
-                items.append({
+                item = {
                     'title': title[:100],
                     'price': price[:50],
                     'url': full_url,
                     'img_url': img_url,
                     'source': 'Yahoo Auction'
-                })
+                }
+                # ДОБАВЛЯЕМ ID
+                item['id'] = generate_item_id(item)
+                items.append(item)
             except Exception as e:
                 logger.debug(f"Ошибка парсинга Yahoo Auction: {e}")
                 continue
@@ -284,13 +297,16 @@ async def parse_yahoo_shopping_async(session, keyword, semaphore):
                 href = link_elem.get('href') if link_elem else ''
                 full_url = make_full_url('https://shopping.yahoo.co.jp', href)
                 
-                items.append({
+                item = {
                     'title': title[:100],
                     'price': price[:50],
                     'url': full_url,
                     'img_url': img_url,
                     'source': 'Yahoo Shopping'
-                })
+                }
+                # ДОБАВЛЯЕМ ID
+                item['id'] = generate_item_id(item)
+                items.append(item)
             except Exception as e:
                 logger.debug(f"Ошибка парсинга Yahoo Shopping: {e}")
                 continue
@@ -339,13 +355,16 @@ async def parse_rakuten_mall_async(session, keyword, semaphore):
                 href = link_elem.get('href') if link_elem else ''
                 full_url = make_full_url('https://search.rakuten.co.jp', href)
                 
-                items.append({
+                item = {
                     'title': title[:100],
                     'price': price[:50],
                     'url': full_url,
                     'img_url': img_url,
                     'source': 'Rakuten Mall'
-                })
+                }
+                # ДОБАВЛЯЕМ ID
+                item['id'] = generate_item_id(item)
+                items.append(item)
             except Exception as e:
                 logger.debug(f"Ошибка парсинга Rakuten Mall: {e}")
                 continue
@@ -392,13 +411,16 @@ async def parse_ebay_async(session, keyword, semaphore):
                 
                 href = link_elem.get('href').split('?')[0]
                 
-                items.append({
+                item = {
                     'title': title[:100],
                     'price': price[:50],
                     'url': href,
                     'img_url': img_url,
                     'source': 'eBay'
-                })
+                }
+                # ДОБАВЛЯЕМ ID
+                item['id'] = generate_item_id(item)
+                items.append(item)
             except Exception as e:
                 logger.debug(f"Ошибка парсинга eBay: {e}")
                 continue
@@ -443,13 +465,16 @@ async def parse_2ndstreet_async(session, keyword, semaphore):
                 href = link_elem.get('href')
                 full_url = make_full_url('https://www.2ndstreet.jp', href)
                 
-                items.append({
+                item = {
                     'title': title[:100],
                     'price': price[:50],
                     'url': full_url,
                     'img_url': img_url,
                     'source': '2nd Street JP'
-                })
+                }
+                # ДОБАВЛЯЕМ ID
+                item['id'] = generate_item_id(item)
+                items.append(item)
             except Exception as e:
                 logger.debug(f"Ошибка парсинга 2nd Street: {e}")
                 continue
