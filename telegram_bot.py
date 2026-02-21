@@ -16,7 +16,7 @@ from scheduler_common import run_search
 from scheduler import check_all_marketplaces
 from utils import (
     test_proxy, add_proxy_to_pool, check_and_update_proxies,
-    get_proxy_stats, mark_proxy_bad_str
+    get_proxy_stats, mark_proxy_bad_str, test_proxy_async  # ✅ добавлен импорт
 )
 from database import (
     get_items_by_brand_main, get_brands_stats, check_item_status,
@@ -472,7 +472,7 @@ def handle_callback_int(callback, chat_id):
     handle_callback_main_menu(callback, chat_id)
 
 def handle_callback_start_check(callback, chat_id):
-    if BOT_STATE.get('is_checking', False):  # можно использовать, но у нас нет глобального is_checking
+    if BOT_STATE.get('is_checking', False):
         send_telegram_message("⚠️ Проверка уже выполняется", chat_id=chat_id)
     else:
         stop_event.clear()
@@ -494,7 +494,7 @@ def handle_callback_start_super_turbo(callback, chat_id):
             for typ in ['latin', 'jp', 'cn', 'universal']:
                 if typ in group['variations']:
                     all_vars.extend(group['variations'][typ])
-        keywords = list(set(all_vars))[:50]  # ограничим 50 ключами
+        keywords = list(set(all_vars))[:50]
     else:
         if not selected_brands:
             send_telegram_message("⚠️ В ручном режиме нужно выбрать бренды!", chat_id=chat_id)
@@ -506,11 +506,10 @@ def handle_callback_start_super_turbo(callback, chat_id):
         keywords = []
         for brand in selected_brands:
             keywords.extend(get_variations_for_platform(brand, sample_platform))
-        keywords = list(set(keywords))[:50]  # тоже ограничим
+        keywords = list(set(keywords))[:50]
     if not keywords:
         send_telegram_message("⚠️ Нет ключевых слов для поиска", chat_id=chat_id)
         return
-    # Для супер-турбо используем 10 воркеров
     send_telegram_message(f"⚡ Запускаю супер-турбо поиск по {len(keywords)} ключам...", chat_id=chat_id)
     Thread(target=run_search, args=(keywords, platforms, chat_id, 10)).start()
 
@@ -651,7 +650,6 @@ async def process_proxies_batch(proxies, chat_id):
                 await asyncio.get_running_loop().run_in_executor(
                     None, send_telegram_message, f"❌ {proxy} не работает", None, None, chat_id
                 )
-        # после каждой пачки отправляем прогресс
         await asyncio.get_running_loop().run_in_executor(
             None, send_telegram_message, f"⏳ Проверено {min(i+batch_size, total)}/{total}", None, None, chat_id
         )
