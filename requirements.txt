@@ -8,3 +8,4 @@ python-dotenv
 python-telegram-bot==20.7
 telegram
 aiohttp==3.9.1
+playwright>=1.40.0

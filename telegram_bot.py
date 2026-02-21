@@ -15,7 +15,7 @@ from brands import BRAND_MAIN_NAMES, get_variations_for_platform, BRAND_GROUPS, 
 from scheduler import run_search, check_all_marketplaces
 from utils import (
     test_proxy, add_proxy_to_pool, check_and_update_proxies,
-    get_proxy_stats, init_proxy_pool, mark_proxy_bad_str
+    get_proxy_stats, mark_proxy_bad_str, test_proxy_async
 )
 from database import (
     get_items_by_brand_main, get_brands_stats, check_item_status,
@@ -86,7 +86,6 @@ def send_telegram_album(media_group, chat_id=None):
         return False
 
 def answer_callback(callback_query_id, text=None):
-    """Отвечает на callback, чтобы убрать часики"""
     if TELEGRAM_BOT_TOKEN:
         requests.post(
             f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/answerCallbackQuery",
@@ -101,6 +100,8 @@ def build_main_menu():
         pause_status = "⏸ ПАУЗА" if BOT_STATE['paused'] else "▶️ АКТИВЕН"
         platforms = ", ".join(BOT_STATE['selected_platforms']) if BOT_STATE['selected_platforms'] else "Нет"
         brands_info = f"Выбрано: {len(BOT_STATE['selected_brands'])}" if BOT_STATE['selected_brands'] else "Бренды не выбраны"
+        # Безопасно получаем длину PROXY_POOL
+        proxy_count = len(PROXY_POOL)
         msg = (
             f"🤖 Мониторинг\n"
             f"Режим: {BOT_STATE['mode']}\n"
@@ -108,7 +109,7 @@ def build_main_menu():
             f"Статус: {pause_status}\n"
             f"Площадки: {platforms}\n"
             f"{brands_info}\n"
-            f"Прокси в пуле: {len(PROXY_POOL)}\n"
+            f"Прокси в пуле: {proxy_count}\n"
             f"Проверок: {BOT_STATE['stats']['total_checks']}\n"
             f"Найдено: {BOT_STATE['stats']['total_finds']}\n"
             f"Последняя: {BOT_STATE['last_check'] or 'никогда'}"
@@ -297,9 +298,11 @@ def build_brands_list_for_items(page=0):
     return "📋 Выберите бренд для просмотра товаров:", keyboard
 
 def build_items_by_brand(brand, page=0, show_sold=False):
-    items = get_items_by_brand_main(brand, limit=50, include_sold=show_sold)
+    # Нормализуем имя бренда: удаляем лишние пробелы, оставляем как есть (регистр важен для поиска в БД)
+    brand_clean = brand.strip()
+    items = get_items_by_brand_main(brand_clean, limit=50, include_sold=show_sold)
     if not items:
-        return f"❌ Нет товаров для бренда {brand}", {"inline_keyboard": [[{"text": "◀️ Назад", "callback_data": "myitems_brands"}]]}
+        return f"❌ Нет товаров для бренда {brand_clean}", {"inline_keyboard": [[{"text": "◀️ Назад", "callback_data": "myitems_brands"}]]}
     per_page = 5
     start = page * per_page
     end = start + per_page
@@ -307,7 +310,7 @@ def build_items_by_brand(brand, page=0, show_sold=False):
     pages = (total + per_page - 1) // per_page
     slice_items = items[start:end]
 
-    msg = f"📦 <b>{brand}</b> - товары {start+1}-{min(end, total)} из {total}\n\n"
+    msg = f"📦 <b>{brand_clean}</b> - товары {start+1}-{min(end, total)} из {total}\n\n"
     for i, item in enumerate(slice_items, start+1):
         status = "✅" if item['is_active'] else "💰 ПРОДАН"
         msg += f"{i}. {status} <a href='{item['url']}'>{item['title'][:50]}</a>\n"
@@ -316,18 +319,18 @@ def build_items_by_brand(brand, page=0, show_sold=False):
     keyboard = {"inline_keyboard": []}
     nav = []
     if page > 0:
-        nav.append({"text": "◀️", "callback_data": f"brandpage_{brand}_{page-1}_{int(show_sold)}"})
+        nav.append({"text": "◀️", "callback_data": f"brandpage_{brand_clean}_{page-1}_{int(show_sold)}"})
     nav.append({"text": f"{page+1}/{pages}", "callback_data": "noop"})
     if page < pages-1:
-        nav.append({"text": "▶️", "callback_data": f"brandpage_{brand}_{page+1}_{int(show_sold)}"})
+        nav.append({"text": "▶️", "callback_data": f"brandpage_{brand_clean}_{page+1}_{int(show_sold)}"})
     if nav:
         keyboard["inline_keyboard"].append(nav)
 
     toggle_text = "🔄 Показать все" if not show_sold else "✅ Только активные"
-    toggle_data = f"brandpage_{brand}_0_{0 if show_sold else 1}"
+    toggle_data = f"brandpage_{brand_clean}_0_{0 if show_sold else 1}"
     actions = [
         [{"text": toggle_text, "callback_data": toggle_data}],
-        [{"text": "🔄 Проверить проданные", "callback_data": f"checksold_{brand}"}],
+        [{"text": "🔄 Проверить проданные", "callback_data": f"checksold_{brand_clean}"}],
         [{"text": "📋 Все бренды", "callback_data": "myitems_brands"}],
         [{"text": "◀️ Главное меню", "callback_data": "main_menu"}]
     ]
@@ -470,17 +473,11 @@ def handle_callback_int(callback, chat_id):
     handle_callback_main_menu(callback, chat_id)
 
 def handle_callback_start_check(callback, chat_id):
-    if BOT_STATE['is_checking']:
-        send_telegram_message("⚠️ Проверка уже выполняется", chat_id=chat_id)
-    else:
-        stop_event.clear()
-        send_telegram_message("⏳ Запускаю обычный поиск...", chat_id=chat_id)
-        Thread(target=check_all_marketplaces, args=(chat_id,)).start()
+    stop_event.clear()
+    send_telegram_message("⏳ Запускаю обычный поиск...", chat_id=chat_id)
+    Thread(target=check_all_marketplaces, args=(chat_id,)).start()
 
 def handle_callback_start_super_turbo(callback, chat_id):
-    if BOT_STATE['is_checking']:
-        send_telegram_message("⚠️ Проверка уже выполняется", chat_id=chat_id)
-        return
     stop_event.clear()
     with state_lock:
         mode = BOT_STATE['mode']
@@ -521,8 +518,9 @@ def handle_callback_proxy_menu(callback, chat_id):
 
 def handle_callback_proxy_add(callback, chat_id):
     send_telegram_message(
-        "📝 Отправьте список прокси (каждый с новой строки).\n"
-        "Формат: protocol://ip:port (например, http://123.45.67.89:8080 или socks5://...)",
+        "📝 Отправьте список прокси (каждый с новой строки) или файл .txt/.json.\n"
+        "Формат: protocol://ip:port (например, http://123.45.67.89:8080 или socks5://...)\n"
+        "Если отправляете файл, просто прикрепите его.",
         chat_id=chat_id
     )
     with state_lock:
@@ -627,9 +625,61 @@ PREFIX_HANDLERS = {
 
 # ==================== Обработчик сообщений ====================
 
+async def process_proxies_batch(proxies, chat_id):
+    """Асинхронно проверяет пачку прокси (до 50) с отчётом о прогрессе"""
+    total = len(proxies)
+    working = []
+    batch_size = 10
+    for i in range(0, total, batch_size):
+        batch = proxies[i:i+batch_size]
+        tasks = [test_proxy_async(p) for p in batch]
+        results = await asyncio.gather(*tasks)
+        for proxy, ok, ip, speed in results:
+            if ok:
+                working.append(proxy)
+                add_proxy_to_pool(proxy)
+                await asyncio.get_running_loop().run_in_executor(
+                    None, send_telegram_message, f"✅ {proxy} работает (IP: {ip}, {speed}с)", None, None, chat_id
+                )
+            else:
+                await asyncio.get_running_loop().run_in_executor(
+                    None, send_telegram_message, f"❌ {proxy} не работает", None, None, chat_id
+                )
+        # после каждой пачки отправляем прогресс
+        await asyncio.get_running_loop().run_in_executor(
+            None, send_telegram_message, f"⏳ Проверено {min(i+batch_size, total)}/{total}", None, None, chat_id
+        )
+    return working
+
+def handle_proxy_file_download(file_id, chat_id):
+    """Скачивает файл с прокси и возвращает список строк"""
+    token = TELEGRAM_BOT_TOKEN
+    if not token:
+        return None
+    # Получаем file_path
+    r = requests.get(f"https://api.telegram.org/bot{token}/getFile?file_id={file_id}")
+    if r.status_code != 200:
+        send_telegram_message("❌ Не удалось получить файл", chat_id=chat_id)
+        return None
+    file_path = r.json()['result']['file_path']
+    file_url = f"https://api.telegram.org/file/bot{token}/{file_path}"
+    # Скачиваем содержимое
+    r = requests.get(file_url)
+    if r.status_code != 200:
+        send_telegram_message("❌ Не удалось скачать файл", chat_id=chat_id)
+        return None
+    content = r.text
+    lines = []
+    for line in content.splitlines():
+        line = line.strip()
+        if line and not line.startswith('#'):
+            lines.append(line)
+    return lines
+
 def handle_message(update):
     chat_id = update['message']['chat']['id']
     text = update['message'].get('text', '')
+    document = update['message'].get('document')
 
     with state_lock:
         awaiting = BOT_STATE.get('awaiting_proxy', False)
@@ -637,13 +687,39 @@ def handle_message(update):
     if awaiting:
         with state_lock:
             BOT_STATE['awaiting_proxy'] = False
-        lines = text.strip().split('\n')
-        proxies = [line.strip() for line in lines if line.strip()]
+
+        proxies = []
+        if document:
+            # это файл
+            file_id = document['file_id']
+            send_telegram_message("📥 Загружаю файл с прокси...", chat_id=chat_id)
+            proxies = handle_proxy_file_download(file_id, chat_id)
+            if proxies is None:
+                return
+        else:
+            # текстовое сообщение
+            lines = text.strip().split('\n')
+            proxies = [line.strip() for line in lines if line.strip()]
+
         if not proxies:
             send_telegram_message("❌ Список пуст. Попробуйте снова.", chat_id=chat_id)
-        else:
-            send_telegram_message(f"🔍 Проверяю {len(proxies)} прокси...", chat_id=chat_id)
-            Thread(target=add_proxies_from_list, args=(proxies, chat_id)).start()
+            return
+
+        send_telegram_message(f"🔍 Проверяю {len(proxies)} прокси (это может занять некоторое время)...", chat_id=chat_id)
+        # запускаем асинхронную проверку в отдельном потоке
+        def run_check():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                working = loop.run_until_complete(process_proxies_batch(proxies, chat_id))
+                msg = f"✅ Проверка завершена. Рабочих прокси: {len(working)}/{len(proxies)}"
+                send_telegram_message(msg, chat_id=chat_id)
+                # Обновляем главное меню, чтобы отобразить новое количество прокси
+                msg, kb = build_main_menu()
+                send_telegram_message(msg, keyboard=kb, chat_id=chat_id)
+            finally:
+                loop.close()
+        Thread(target=run_check).start()
         return
 
     if text == '/start':
@@ -651,32 +727,15 @@ def handle_message(update):
     else:
         send_telegram_message("❌ Неизвестная команда. Используйте /start", chat_id=chat_id)
 
-# ==================== Функции для работы с прокси (асинхронные) ====================
-
-async def async_check_proxies(proxies, chat_id):
-    working = []
-    for i, proxy in enumerate(proxies, 1):
-        send_telegram_message(f"⏳ Проверка {i}/{len(proxies)}: {proxy}", chat_id=chat_id)
-        loop = asyncio.get_running_loop()
-        _, ok, _, _ = await loop.run_in_executor(None, test_proxy, proxy)
-        if ok:
-            working.append(proxy)
-            add_proxy_to_pool(proxy)
-            send_telegram_message(f"✅ {proxy} работает", chat_id=chat_id)
-        else:
-            send_telegram_message(f"❌ {proxy} не работает", chat_id=chat_id)
-    send_telegram_message(f"✅ Проверено. Рабочих: {len(working)}/{len(proxies)}", chat_id=chat_id)
-    send_proxy_menu(chat_id)
-
-def add_proxies_from_list(proxies, chat_id):
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        loop.run_until_complete(async_check_proxies(proxies, chat_id))
-    finally:
-        loop.close()
-
 def check_all_proxies(chat_id):
+    """Проверяет все прокси из текущего пула (синхронно, многопоточно)"""
+    with state_lock:
+        proxies = PROXY_POOL.copy()
+    if not proxies:
+        send_telegram_message("❌ Пул прокси пуст", chat_id=chat_id)
+        send_proxy_menu(chat_id)
+        return
+    send_telegram_message(f"🔄 Начинаю проверку всех {len(proxies)} прокси в пуле...", chat_id=chat_id)
     working = check_and_update_proxies()
     send_telegram_message(f"✅ Проверка завершена. Рабочих прокси: {len(working)}", chat_id=chat_id)
     send_proxy_menu(chat_id)

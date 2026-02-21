@@ -75,6 +75,7 @@ def remove_proxy_from_pool(proxy_url):
     return False
 
 def test_proxy(proxy_url):
+    """Синхронная проверка одного прокси"""
     proxies = {'http': proxy_url, 'https': proxy_url}
     try:
         start = time.time()
@@ -86,7 +87,13 @@ def test_proxy(proxy_url):
         pass
     return proxy_url, False, None, None
 
+async def test_proxy_async(proxy_url):
+    """Асинхронная проверка одного прокси (запускает синхронную в executor)"""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, test_proxy, proxy_url)
+
 def check_and_update_proxies(proxy_list=None):
+    """Проверяет список прокси и обновляет пул (синхронно, многопоточно)"""
     if proxy_list is None:
         with proxy_lock:
             proxy_list = PROXY_POOL.copy()
@@ -95,7 +102,7 @@ def check_and_update_proxies(proxy_list=None):
         return []
     
     working = []
-    with ThreadPoolExecutor(max_workers=10) as executor:
+    with ThreadPoolExecutor(max_workers=20) as executor:
         futures = {executor.submit(test_proxy, p): p for p in proxy_list}
         for future in as_completed(futures):
             proxy, ok, ip, speed = future.result()
