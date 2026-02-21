@@ -5,6 +5,7 @@ ENV PYTHONDONTWRITEBYTECODE=1
 
 WORKDIR /app
 
+# Системные зависимости для Chromium
 RUN apt-get update && apt-get install -y \
     wget \
     curl \
@@ -40,7 +41,8 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-RUN python -m playwright install --with-deps chromium
+# Установка Chromium
+RUN python -m playwright install chromium
 
 COPY . .
 
