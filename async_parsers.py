@@ -9,14 +9,22 @@ from utils import (
 )
 from playwright_manager import fetch_html_playwright
 
-# ==================== Быстрый асинхронный запрос с прокси ====================
+# Устанавливаем Brotli для aiohttp (нужно добавить в requirements.txt)
+try:
+    import brotli
+except ImportError:
+    logger.warning("Brotli not installed, some sites may fail. Run: pip install brotli")
+
+# Семафор для ограничения одновременных Playwright запросов (чтобы не убивать память)
+PLAYWRIGHT_SEMAPHORE = asyncio.Semaphore(3)  # максимум 3 параллельных страницы
+
 async def fetch_html(session, url, semaphore, timeout=15, retries=3):
     async with semaphore:
         headers = {
             'User-Agent': get_next_user_agent(),
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
             'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
-            'Accept-Encoding': 'gzip, deflate, br',
+            'Accept-Encoding': 'gzip, deflate, br',  # указываем, что поддерживаем brotli
             'Connection': 'keep-alive',
             'Upgrade-Insecure-Requests': '1'
         }
@@ -46,7 +54,7 @@ async def fetch_html(session, url, semaphore, timeout=15, retries=3):
                 await asyncio.sleep(2 ** attempt)
         return None
 
-# ==================== Гибридная загрузка ====================
+# ==================== Гибридная загрузка с ограничением Playwright ====================
 async def fetch_with_fallback(session, url, semaphore, expected_selector=None, use_playwright=True):
     html = await fetch_html(session, url, semaphore)
     if html:
@@ -60,12 +68,14 @@ async def fetch_with_fallback(session, url, semaphore, expected_selector=None, u
             return html
 
     if use_playwright:
-        logger.info(f"🔄 Fallback to Playwright for {url[:100]}...")
-        html = await fetch_html_playwright(url, expected_selector=expected_selector)
-        return html
+        # Используем отдельный семафор для Playwright
+        async with PLAYWRIGHT_SEMAPHORE:
+            logger.info(f"🔄 Fallback to Playwright for {url[:100]}...")
+            html = await fetch_html_playwright(url, expected_selector=expected_selector)
+            return html
     return None
 
-# ==================== Вспомогательная функция для извлечения данных ====================
+# ==================== Вспомогательная функция для извлечения данных из карточки ====================
 def extract_item_from_card(card, source, base_url, title_sel, price_sel, link_sel='a', img_sel='img'):
     try:
         title_elem = card.select_one(title_sel)
@@ -99,7 +109,8 @@ def extract_item_from_card(card, source, base_url, title_sel, price_sel, link_se
         logger.debug(f"Ошибка парсинга карточки {source}: {e}")
         return None
 
-# ==================== Парсер Mercari JP ====================
+# ==================== Парсеры (с использованием fetch_with_fallback) ====================
+
 async def parse_mercari_async(session, keyword, semaphore):
     items = []
     url = f"https://jp.mercari.com/search?keyword={quote(keyword)}&order=desc&sort=created_time"
@@ -126,7 +137,6 @@ async def parse_mercari_async(session, keyword, semaphore):
         logger.error(f"Ошибка парсинга Mercari для {keyword}: {e}")
     return items
 
-# ==================== Парсер Rakuten Rakuma ====================
 async def parse_rakuma_async(session, keyword, semaphore):
     items = []
     url = f"https://fril.jp/s?query={quote(keyword)}&order=desc&sort=created_at"
@@ -153,7 +163,6 @@ async def parse_rakuma_async(session, keyword, semaphore):
         logger.error(f"Ошибка парсинга Rakuma для {keyword}: {e}")
     return items
 
-# ==================== Парсер Yahoo Flea ====================
 async def parse_yahoo_flea_async(session, keyword, semaphore):
     items = []
     url = f"https://paypayfleamarket.yahoo.co.jp/search/{quote(keyword)}?order=desc&sort=create_time"
@@ -180,7 +189,6 @@ async def parse_yahoo_flea_async(session, keyword, semaphore):
         logger.error(f"Ошибка парсинга Yahoo Flea для {keyword}: {e}")
     return items
 
-# ==================== Парсер Yahoo Auction ====================
 async def parse_yahoo_auction_async(session, keyword, semaphore):
     items = []
     url = f"https://auctions.yahoo.co.jp/search/search?p={quote(keyword)}&aq=-1&type=all&auccat=&tab_ex=commerce&order=desc"
@@ -207,7 +215,6 @@ async def parse_yahoo_auction_async(session, keyword, semaphore):
         logger.error(f"Ошибка парсинга Yahoo Auction для {keyword}: {e}")
     return items
 
-# ==================== Парсер Yahoo Shopping ====================
 async def parse_yahoo_shopping_async(session, keyword, semaphore):
     items = []
     url = f"https://shopping.yahoo.co.jp/search?p={quote(keyword)}&used=1&order=desc&sort=create_time"
@@ -234,7 +241,6 @@ async def parse_yahoo_shopping_async(session, keyword, semaphore):
         logger.error(f"Ошибка парсинга Yahoo Shopping для {keyword}: {e}")
     return items
 
-# ==================== Парсер Rakuten Mall ====================
 async def parse_rakuten_mall_async(session, keyword, semaphore):
     items = []
     url = f"https://search.rakuten.co.jp/search/mall/{quote(keyword)}/?used=1"
@@ -264,7 +270,6 @@ async def parse_rakuten_mall_async(session, keyword, semaphore):
         logger.error(f"Ошибка парсинга Rakuten Mall для {keyword}: {e}")
     return items
 
-# ==================== Парсер eBay ====================
 async def parse_ebay_async(session, keyword, semaphore):
     items = []
     url = f"https://www.ebay.com/sch/i.html?_nkw={quote(keyword)}&_sacat=11450&LH_ItemCondition=4&_sop=10"
@@ -294,7 +299,6 @@ async def parse_ebay_async(session, keyword, semaphore):
         logger.error(f"Ошибка парсинга eBay для {keyword}: {e}")
     return items
 
-# ==================== Парсер 2nd Street JP ====================
 async def parse_2ndstreet_async(session, keyword, semaphore):
     items = []
     url = f"https://www.2ndstreet.jp/search?keyword={quote(keyword)}"
