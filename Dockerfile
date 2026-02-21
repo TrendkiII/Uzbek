@@ -48,4 +48,4 @@ COPY . .
 
 ENV PORT=8080
 
-CMD ["python", "telegram_bot.py"]
+CMD ["python", "main.py"]
