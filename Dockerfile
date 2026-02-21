@@ -44,7 +44,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Устанавливаем Chromium через Playwright
 RUN python -m playwright install chromium
-RUN python -m playwright install-deps  # дополнительно установит зависимости
+RUN python -m playwright install-deps
 
 # Копируем весь код
 COPY . .
@@ -52,5 +52,5 @@ COPY . .
 # Порт для Railway
 ENV PORT=8080
 
-# Запускаем через gunicorn (более производительно, чем Flask dev server)
-CMD ["gunicorn", "-w", "4", "-b", "0.0.0.0:8080", "telegram_bot:app"]
+# Запускаем main.py (он запустит Flask и всю инициализацию)
+CMD ["python", "main.py"]

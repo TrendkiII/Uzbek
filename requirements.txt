@@ -7,4 +7,3 @@ fake-useragent>=1.4.0
 lxml>=4.9.0
 python-dotenv>=1.0.0
 brotli>=1.0.9
-gunicorn>=21.2.0
