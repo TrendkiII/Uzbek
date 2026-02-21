@@ -4,8 +4,8 @@ from config import logger
 
 _browser: Browser = None
 _playwright = None
-_page_semaphore = asyncio.Semaphore(5)
-_browser_available = False  # флаг, что браузер готов и работает
+_page_semaphore = asyncio.Semaphore(1)  # ⚡ уменьшено до 1 для экономии памяти
+_browser_available = False
 
 async def init_browser():
     """Инициализирует глобальный браузер Playwright"""
@@ -48,7 +48,7 @@ async def close_browser():
     _browser_available = False
     logger.info("🛑 Playwright browser closed")
 
-async def fetch_html_playwright(url, expected_selector=None, timeout=30000):
+async def fetch_html_playwright(url, expected_selector=None, timeout=60000):  # ⏰ увеличено до 60 сек
     """
     Получает HTML через Playwright, используя глобальный браузер.
     Если браузер недоступен, сразу возвращает None.
@@ -69,7 +69,7 @@ async def fetch_html_playwright(url, expected_selector=None, timeout=30000):
             logger.info(f"🌐 Playwright page loading {url[:100]}...")
             await page.goto(url, timeout=timeout)
             if expected_selector:
-                await page.wait_for_selector(expected_selector, timeout=10000)
+                await page.wait_for_selector(expected_selector, timeout=20000)  # ⏰ увеличено до 20 сек
             html = await page.content()
             return html
         except PlaywrightError as e:
@@ -80,7 +80,5 @@ async def fetch_html_playwright(url, expected_selector=None, timeout=30000):
             return None
         finally:
             if page:
-                try:
-                    await page.close()
-                except:
-                    pass
+                await page.close()
+                await asyncio.sleep(0.5)  # 💤 небольшая задержка для освобождения памяти

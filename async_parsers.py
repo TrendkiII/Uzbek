@@ -16,7 +16,7 @@ except ImportError:
     logger.warning("Brotli not installed, some sites may fail. Run: pip install brotli")
 
 # Семафор для ограничения одновременных Playwright запросов (чтобы не убивать память)
-PLAYWRIGHT_SEMAPHORE = asyncio.Semaphore(3)  # максимум 3 параллельных страницы
+PLAYWRIGHT_SEMAPHORE = asyncio.Semaphore(1)  # ⚡ только одна страница одновременно
 
 async def fetch_html(session, url, semaphore, timeout=15, retries=3):
     async with semaphore:

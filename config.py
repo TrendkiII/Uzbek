@@ -31,7 +31,7 @@ BOT_STATE = {
     "last_check": None,
     "paused": False,
     "shutdown": False,
-    "interval": 30,
+    "interval": 30,  # минут
     "stats": {
         "total_checks": 0,
         "total_finds": 0,
@@ -48,7 +48,7 @@ REQUEST_TIMEOUT = 30
 MAX_RETRIES = 5
 RETRY_DELAY = 5
 ITEMS_PER_PAGE = 10
-MAX_WORKERS = 8
+MAX_WORKERS = 4                     # уменьшено с 8
 PROXY_FILE = "proxies.json"
 
 MIN_DELAY_BETWEEN_REQUESTS = 2

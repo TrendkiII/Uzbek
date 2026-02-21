@@ -14,6 +14,7 @@ def check_all_marketplaces(chat_id=None):
     
     logger.info(f"🚀 Запуск проверки (планировщик/ручной) в режиме {'ТУРБО' if turbo else 'обычном'}")
     
+    # Формируем ключевые слова
     if mode == 'auto':
         all_vars = []
         for group in BRAND_GROUPS:
@@ -22,7 +23,7 @@ def check_all_marketplaces(chat_id=None):
                     all_vars.extend(group['variations'][typ])
         keywords = list(set(all_vars))
         if not turbo:
-            keywords = keywords[:30]
+            keywords = keywords[:20]  # ограничим до 20 в обычном режиме
     else:
         if not selected_brands:
             logger.warning("Ручной режим, но бренды не выбраны")
@@ -31,9 +32,13 @@ def check_all_marketplaces(chat_id=None):
         keywords = []
         for brand in selected_brands:
             keywords.extend(expand_selected_brands_for_platforms([brand], [sample_platform])[sample_platform])
-        keywords = list(set(keywords))
+        keywords = list(set(keywords))[:20]  # тоже ограничим
     
-    return run_search(keywords, platforms, chat_id, max_concurrent=20 if turbo else 10)
+    # Запускаем поиск с уменьшенным max_concurrent (5 для обычного, 10 для турбо)
+    max_conc = 10 if turbo else 5
+    result = run_search(keywords, platforms, chat_id, max_concurrent=max_conc)
+    
+    return result
 
 def run_scheduler():
     global scheduler_busy
@@ -45,7 +50,7 @@ def run_scheduler():
         with state_lock:
             turbo = BOT_STATE.get('turbo_mode', False)
             if turbo:
-                interval = 5 * 60
+                interval = 10 * 60  # 10 минут (увеличено с 5)
             else:
                 interval = BOT_STATE['interval'] * 60
             paused = BOT_STATE['paused']
