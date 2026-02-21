@@ -9,29 +9,35 @@ from utils import (
 )
 from playwright_manager import fetch_html_playwright
 
-# Устанавливаем Brotli для aiohttp (нужно добавить в requirements.txt)
 try:
     import brotli
 except ImportError:
     logger.warning("Brotli not installed, some sites may fail. Run: pip install brotli")
 
-# Семафор для ограничения одновременных Playwright запросов (чтобы не убивать память)
-PLAYWRIGHT_SEMAPHORE = asyncio.Semaphore(1)  # ⚡ только одна страница одновременно
+# Глобальный семафор для ограничения общего числа параллельных запросов (HTTP + Playwright)
+GLOBAL_SEMAPHORE = asyncio.Semaphore(10)  # максимум 10 одновременных запросов всего
 
-async def fetch_html(session, url, semaphore, timeout=15, retries=3):
-    async with semaphore:
+# Отдельный семафор для Playwright (чтобы не перегружать браузер)
+PLAYWRIGHT_SEMAPHORE = asyncio.Semaphore(2)  # не больше 2 страниц одновременно
+
+async def fetch_html(session, url):
+    """
+    Выполняет HTTP-запрос через aiohttp с прокси и повторными попытками.
+    Использует глобальный семафор.
+    """
+    async with GLOBAL_SEMAPHORE:
         headers = {
             'User-Agent': get_next_user_agent(),
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
             'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
-            'Accept-Encoding': 'gzip, deflate, br',  # указываем, что поддерживаем brotli
+            'Accept-Encoding': 'gzip, deflate, br',
             'Connection': 'keep-alive',
             'Upgrade-Insecure-Requests': '1'
         }
-        for attempt in range(retries):
+        for attempt in range(3):  # максимум 3 попытки
             proxy = await get_next_proxy_async()
             try:
-                async with session.get(url, headers=headers, proxy=proxy, timeout=timeout, ssl=False) as response:
+                async with session.get(url, headers=headers, proxy=proxy, timeout=15, ssl=False) as response:
                     if response.status == 200:
                         return await response.text()
                     elif response.status in [403, 404]:
@@ -50,13 +56,15 @@ async def fetch_html(session, url, semaphore, timeout=15, retries=3):
                 logger.warning(f"🔌 Ошибка подключения (попытка {attempt+1}): {e}")
             except Exception as e:
                 logger.error(f"❌ Ошибка загрузки {url[:100]}: {e}")
-            if attempt < retries - 1:
-                await asyncio.sleep(2 ** attempt)
+            await asyncio.sleep(2 ** attempt)
         return None
 
-# ==================== Гибридная загрузка с ограничением Playwright ====================
-async def fetch_with_fallback(session, url, semaphore, expected_selector=None, use_playwright=True):
-    html = await fetch_html(session, url, semaphore)
+async def fetch_with_fallback(session, url, expected_selector=None, use_playwright=True):
+    """
+    Пытается сначала загрузить страницу через HTTP. Если не удаётся или нет селектора,
+    использует Playwright (с отдельным семафором).
+    """
+    html = await fetch_html(session, url)
     if html:
         if expected_selector:
             soup = BeautifulSoup(html, 'lxml')
@@ -68,14 +76,14 @@ async def fetch_with_fallback(session, url, semaphore, expected_selector=None, u
             return html
 
     if use_playwright:
-        # Используем отдельный семафор для Playwright
-        async with PLAYWRIGHT_SEMAPHORE:
-            logger.info(f"🔄 Fallback to Playwright for {url[:100]}...")
-            html = await fetch_html_playwright(url, expected_selector=expected_selector)
-            return html
+        async with PLAYWRIGHT_SEMAPHORE:  # отдельный семафор для Playwright
+            async with GLOBAL_SEMAPHORE:   # но всё равно учитываем в общем лимите
+                logger.info(f"🔄 Fallback to Playwright for {url[:100]}...")
+                html = await fetch_html_playwright(url, expected_selector=expected_selector)
+                return html
     return None
 
-# ==================== Вспомогательная функция для извлечения данных из карточки ====================
+# ==================== Вспомогательная функция для извлечения данных ====================
 def extract_item_from_card(card, source, base_url, title_sel, price_sel, link_sel='a', img_sel='img'):
     try:
         title_elem = card.select_one(title_sel)
@@ -109,12 +117,11 @@ def extract_item_from_card(card, source, base_url, title_sel, price_sel, link_se
         logger.debug(f"Ошибка парсинга карточки {source}: {e}")
         return None
 
-# ==================== Парсеры (с использованием fetch_with_fallback) ====================
-
-async def parse_mercari_async(session, keyword, semaphore):
+# ==================== Индивидуальные парсеры (теперь не принимают семафор) ====================
+async def parse_mercari_async(session, keyword):
     items = []
     url = f"https://jp.mercari.com/search?keyword={quote(keyword)}&order=desc&sort=created_time"
-    html = await fetch_with_fallback(session, url, semaphore, expected_selector='[data-testid="item-cell"]')
+    html = await fetch_with_fallback(session, url, expected_selector='[data-testid="item-cell"]')
     if not html:
         return items
     try:
@@ -137,10 +144,10 @@ async def parse_mercari_async(session, keyword, semaphore):
         logger.error(f"Ошибка парсинга Mercari для {keyword}: {e}")
     return items
 
-async def parse_rakuma_async(session, keyword, semaphore):
+async def parse_rakuma_async(session, keyword):
     items = []
     url = f"https://fril.jp/s?query={quote(keyword)}&order=desc&sort=created_at"
-    html = await fetch_with_fallback(session, url, semaphore, expected_selector='.item')
+    html = await fetch_with_fallback(session, url, expected_selector='.item')
     if not html:
         return items
     try:
@@ -163,10 +170,10 @@ async def parse_rakuma_async(session, keyword, semaphore):
         logger.error(f"Ошибка парсинга Rakuma для {keyword}: {e}")
     return items
 
-async def parse_yahoo_flea_async(session, keyword, semaphore):
+async def parse_yahoo_flea_async(session, keyword):
     items = []
     url = f"https://paypayfleamarket.yahoo.co.jp/search/{quote(keyword)}?order=desc&sort=create_time"
-    html = await fetch_with_fallback(session, url, semaphore, expected_selector='.Product')
+    html = await fetch_with_fallback(session, url, expected_selector='.Product')
     if not html:
         return items
     try:
@@ -189,10 +196,10 @@ async def parse_yahoo_flea_async(session, keyword, semaphore):
         logger.error(f"Ошибка парсинга Yahoo Flea для {keyword}: {e}")
     return items
 
-async def parse_yahoo_auction_async(session, keyword, semaphore):
+async def parse_yahoo_auction_async(session, keyword):
     items = []
     url = f"https://auctions.yahoo.co.jp/search/search?p={quote(keyword)}&aq=-1&type=all&auccat=&tab_ex=commerce&order=desc"
-    html = await fetch_with_fallback(session, url, semaphore, expected_selector='.Product')
+    html = await fetch_with_fallback(session, url, expected_selector='.Product')
     if not html:
         return items
     try:
@@ -215,10 +222,10 @@ async def parse_yahoo_auction_async(session, keyword, semaphore):
         logger.error(f"Ошибка парсинга Yahoo Auction для {keyword}: {e}")
     return items
 
-async def parse_yahoo_shopping_async(session, keyword, semaphore):
+async def parse_yahoo_shopping_async(session, keyword):
     items = []
     url = f"https://shopping.yahoo.co.jp/search?p={quote(keyword)}&used=1&order=desc&sort=create_time"
-    html = await fetch_with_fallback(session, url, semaphore, expected_selector='.Loop__item')
+    html = await fetch_with_fallback(session, url, expected_selector='.Loop__item')
     if not html:
         return items
     try:
@@ -241,13 +248,15 @@ async def parse_yahoo_shopping_async(session, keyword, semaphore):
         logger.error(f"Ошибка парсинга Yahoo Shopping для {keyword}: {e}")
     return items
 
-async def parse_rakuten_mall_async(session, keyword, semaphore):
+async def parse_rakuten_mall_async(session, keyword):
     items = []
-    url = f"https://search.rakuten.co.jp/search/mall/{quote(keyword)}/?used=1"
-    html = await fetch_with_fallback(session, url, semaphore, expected_selector='.searchresultitem')
+    # Исправление: не делаем двойное кодирование, просто quote с safe=''
+    encoded = quote(keyword, safe='')
+    url = f"https://search.rakuten.co.jp/search/mall/{encoded}/?used=1"
+    html = await fetch_with_fallback(session, url, expected_selector='.searchresultitem')
     if not html:
-        alt_url = f"https://search.rakuten.co.jp/search/mall/?v=2&p={quote(keyword)}&used=1"
-        html = await fetch_with_fallback(session, alt_url, semaphore, expected_selector='.searchresultitem')
+        alt_url = f"https://search.rakuten.co.jp/search/mall/?v=2&p={encoded}&used=1"
+        html = await fetch_with_fallback(session, alt_url, expected_selector='.searchresultitem')
         if not html:
             return items
     try:
@@ -270,10 +279,10 @@ async def parse_rakuten_mall_async(session, keyword, semaphore):
         logger.error(f"Ошибка парсинга Rakuten Mall для {keyword}: {e}")
     return items
 
-async def parse_ebay_async(session, keyword, semaphore):
+async def parse_ebay_async(session, keyword):
     items = []
     url = f"https://www.ebay.com/sch/i.html?_nkw={quote(keyword)}&_sacat=11450&LH_ItemCondition=4&_sop=10"
-    html = await fetch_with_fallback(session, url, semaphore, expected_selector='li.s-item')
+    html = await fetch_with_fallback(session, url, expected_selector='li.s-item')
     if not html:
         return items
     try:
@@ -299,10 +308,10 @@ async def parse_ebay_async(session, keyword, semaphore):
         logger.error(f"Ошибка парсинга eBay для {keyword}: {e}")
     return items
 
-async def parse_2ndstreet_async(session, keyword, semaphore):
+async def parse_2ndstreet_async(session, keyword):
     items = []
     url = f"https://www.2ndstreet.jp/search?keyword={quote(keyword)}"
-    html = await fetch_with_fallback(session, url, semaphore, expected_selector='.itemList .item')
+    html = await fetch_with_fallback(session, url, expected_selector='.itemList .item')
     if not html:
         return items
     try:
@@ -337,35 +346,54 @@ ASYNC_PARSERS = {
     '2nd Street JP': parse_2ndstreet_async,
 }
 
-# ==================== Основная функция поиска ====================
-async def search_all_async(keywords, platforms, max_concurrent=20):
-    semaphore = asyncio.Semaphore(max_concurrent)
-    connector = aiohttp.TCPConnector(limit=100, limit_per_host=10, ttl_dns_cache=300, ssl=False)
+# ==================== Новая функция с очередью и воркерами ====================
+async def worker(queue, session, results):
+    """Воркер, который берёт задание из очереди и выполняет парсер."""
+    while True:
+        task = await queue.get()
+        if task is None:  # сигнал остановки
+            break
+        platform, keyword = task
+        parser = ASYNC_PARSERS.get(platform)
+        if parser:
+            try:
+                items = await parser(session, keyword)
+                results.extend(items)
+            except Exception as e:
+                logger.error(f"Ошибка при обработке {platform}/{keyword}: {e}")
+        queue.task_done()
+
+async def search_all_async(keywords, platforms, max_workers=5):
+    """
+    Асинхронный поиск с использованием очереди и фиксированного числа воркеров.
+    Не создаёт все задачи сразу, а равномерно распределяет.
+    """
+    queue = asyncio.Queue()
+    results = []
+
+    # Заполняем очередь заданиями (платформа + ключ)
+    for platform in platforms:
+        if platform not in ASYNC_PARSERS:
+            continue
+        for keyword in keywords:
+            await queue.put((platform, keyword))
+
+    # Запускаем воркеров
+    connector = aiohttp.TCPConnector(limit=100, limit_per_host=5, ttl_dns_cache=300, ssl=False)
     timeout = aiohttp.ClientTimeout(total=30)
-    
     async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
-        tasks = []
-        for platform in platforms:
-            if platform in ASYNC_PARSERS:
-                parser = ASYNC_PARSERS[platform]
-                for keyword in keywords:
-                    tasks.append(parser(session, keyword, semaphore))
-        
-        logger.info(f"🚀 Запущено {len(tasks)} асинхронных задач")
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        all_items = []
-        for result in results:
-            if isinstance(result, Exception):
-                logger.error(f"Ошибка в асинхронной задаче: {result}")
-            elif isinstance(result, list):
-                all_items.extend(result)
-        
-        logger.info(f"✅ Асинхронный поиск завершен, найдено {len(all_items)} товаров")
-        return all_items
+        workers = [asyncio.create_task(worker(queue, session, results)) for _ in range(max_workers)]
+        await queue.join()  # ждём, пока очередь опустеет
+        # Останавливаем воркеров
+        for _ in workers:
+            await queue.put(None)
+        await asyncio.gather(*workers)
+
+    logger.info(f"✅ Асинхронный поиск завершен, найдено {len(results)} товаров")
+    return results
 
 # ==================== Функция для запуска из синхронного кода ====================
-def run_async_search(keywords, platforms, max_concurrent=20):
+def run_async_search(keywords, platforms, max_workers=5):
     from async_loop import run_coro
-    future = run_coro(search_all_async(keywords, platforms, max_concurrent))
+    future = run_coro(search_all_async(keywords, platforms, max_workers))
     return future.result()

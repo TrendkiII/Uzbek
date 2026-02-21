@@ -89,7 +89,7 @@ def test_proxy(proxy_url):
     return proxy_url, False, None, None
 
 async def test_proxy_async(proxy_url):
-    """Асинхронная проверка одного прокси (запускает синхронную в executor)"""
+    """Асинхронная версия test_proxy (запускает синхронную в executor)"""
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, test_proxy, proxy_url)
 
@@ -156,7 +156,7 @@ def mark_proxy_bad_str(proxy_str):
     with proxy_lock:
         if proxy_str in PROXY_POOL:
             bad_proxies.add(proxy_str)
-            logger.warning(f"🗑 Прокси {proxy_str} помечен как неработающий (асинхронно)")
+            logger.warning(f"🗑 Прокси {proxy_str} помечен как неработирующий (асинхронно)")
 
 def get_proxy_stats():
     with proxy_lock:

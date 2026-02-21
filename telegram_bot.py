@@ -16,7 +16,7 @@ from scheduler_common import run_search
 from scheduler import check_all_marketplaces
 from utils import (
     test_proxy, add_proxy_to_pool, check_and_update_proxies,
-    get_proxy_stats, mark_proxy_bad_str, test_proxy_async
+    get_proxy_stats, mark_proxy_bad_str
 )
 from database import (
     get_items_by_brand_main, get_brands_stats, check_item_status,
@@ -101,7 +101,6 @@ def build_main_menu():
         pause_status = "⏸ ПАУЗА" if BOT_STATE['paused'] else "▶️ АКТИВЕН"
         platforms = ", ".join(BOT_STATE['selected_platforms']) if BOT_STATE['selected_platforms'] else "Нет"
         brands_info = f"Выбрано: {len(BOT_STATE['selected_brands'])}" if BOT_STATE['selected_brands'] else "Бренды не выбраны"
-        # Безопасно получаем длину PROXY_POOL
         proxy_count = len(PROXY_POOL)
         msg = (
             f"🤖 Мониторинг\n"
@@ -299,7 +298,6 @@ def build_brands_list_for_items(page=0):
     return "📋 Выберите бренд для просмотра товаров:", keyboard
 
 def build_items_by_brand(brand, page=0, show_sold=False):
-    # Нормализуем имя бренда: удаляем лишние пробелы, оставляем как есть (регистр важен для поиска в БД)
     brand_clean = brand.strip()
     items = get_items_by_brand_main(brand_clean, limit=50, include_sold=show_sold)
     if not items:
@@ -474,11 +472,17 @@ def handle_callback_int(callback, chat_id):
     handle_callback_main_menu(callback, chat_id)
 
 def handle_callback_start_check(callback, chat_id):
-    stop_event.clear()
-    send_telegram_message("⏳ Запускаю обычный поиск...", chat_id=chat_id)
-    Thread(target=check_all_marketplaces, args=(chat_id,)).start()
+    if BOT_STATE.get('is_checking', False):  # можно использовать, но у нас нет глобального is_checking
+        send_telegram_message("⚠️ Проверка уже выполняется", chat_id=chat_id)
+    else:
+        stop_event.clear()
+        send_telegram_message("⏳ Запускаю обычный поиск...", chat_id=chat_id)
+        Thread(target=check_all_marketplaces, args=(chat_id,)).start()
 
 def handle_callback_start_super_turbo(callback, chat_id):
+    if BOT_STATE.get('is_checking', False):
+        send_telegram_message("⚠️ Проверка уже выполняется", chat_id=chat_id)
+        return
     stop_event.clear()
     with state_lock:
         mode = BOT_STATE['mode']
@@ -490,7 +494,7 @@ def handle_callback_start_super_turbo(callback, chat_id):
             for typ in ['latin', 'jp', 'cn', 'universal']:
                 if typ in group['variations']:
                     all_vars.extend(group['variations'][typ])
-        keywords = list(set(all_vars))[:50]
+        keywords = list(set(all_vars))[:50]  # ограничим 50 ключами
     else:
         if not selected_brands:
             send_telegram_message("⚠️ В ручном режиме нужно выбрать бренды!", chat_id=chat_id)
@@ -502,12 +506,13 @@ def handle_callback_start_super_turbo(callback, chat_id):
         keywords = []
         for brand in selected_brands:
             keywords.extend(get_variations_for_platform(brand, sample_platform))
-        keywords = list(set(keywords))
+        keywords = list(set(keywords))[:50]  # тоже ограничим
     if not keywords:
         send_telegram_message("⚠️ Нет ключевых слов для поиска", chat_id=chat_id)
         return
+    # Для супер-турбо используем 10 воркеров
     send_telegram_message(f"⚡ Запускаю супер-турбо поиск по {len(keywords)} ключам...", chat_id=chat_id)
-    Thread(target=run_search, args=(keywords, platforms, chat_id, 5)).start()
+    Thread(target=run_search, args=(keywords, platforms, chat_id, 10)).start()
 
 def handle_callback_stop_check(callback, chat_id):
     stop_event.set()
@@ -657,14 +662,12 @@ def handle_proxy_file_download(file_id, chat_id):
     token = TELEGRAM_BOT_TOKEN
     if not token:
         return None
-    # Получаем file_path
     r = requests.get(f"https://api.telegram.org/bot{token}/getFile?file_id={file_id}")
     if r.status_code != 200:
         send_telegram_message("❌ Не удалось получить файл", chat_id=chat_id)
         return None
     file_path = r.json()['result']['file_path']
     file_url = f"https://api.telegram.org/file/bot{token}/{file_path}"
-    # Скачиваем содержимое
     r = requests.get(file_url)
     if r.status_code != 200:
         send_telegram_message("❌ Не удалось скачать файл", chat_id=chat_id)
@@ -691,14 +694,12 @@ def handle_message(update):
 
         proxies = []
         if document:
-            # это файл
             file_id = document['file_id']
             send_telegram_message("📥 Загружаю файл с прокси...", chat_id=chat_id)
             proxies = handle_proxy_file_download(file_id, chat_id)
             if proxies is None:
                 return
         else:
-            # текстовое сообщение
             lines = text.strip().split('\n')
             proxies = [line.strip() for line in lines if line.strip()]
 
@@ -707,7 +708,6 @@ def handle_message(update):
             return
 
         send_telegram_message(f"🔍 Проверяю {len(proxies)} прокси (это может занять некоторое время)...", chat_id=chat_id)
-        # запускаем асинхронную проверку в отдельном потоке
         def run_check():
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
@@ -715,7 +715,6 @@ def handle_message(update):
                 working = loop.run_until_complete(process_proxies_batch(proxies, chat_id))
                 msg = f"✅ Проверка завершена. Рабочих прокси: {len(working)}/{len(proxies)}"
                 send_telegram_message(msg, chat_id=chat_id)
-                # Обновляем главное меню, чтобы отобразить новое количество прокси
                 msg, kb = build_main_menu()
                 send_telegram_message(msg, keyboard=kb, chat_id=chat_id)
             finally:
@@ -729,7 +728,6 @@ def handle_message(update):
         send_telegram_message("❌ Неизвестная команда. Используйте /start", chat_id=chat_id)
 
 def check_all_proxies(chat_id):
-    """Проверяет все прокси из текущего пула (синхронно, многопоточно)"""
     with state_lock:
         proxies = PROXY_POOL.copy()
     if not proxies:

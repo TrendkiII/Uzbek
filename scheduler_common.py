@@ -18,18 +18,20 @@ def send_async_message(send_func, message, photo_url):
     except Exception as e:
         logger.error(f"Ошибка при отправке сообщения: {e}")
 
-def run_search(keywords, platforms, chat_id=None, max_concurrent=5):  # ⚡ уменьшено до 5
+def run_search(keywords, platforms, chat_id=None, max_workers=5):
     """
-    Основная функция поиска. Запускает асинхронный парсинг и мгновенно отправляет новые находки.
+    Основная функция поиска. Запускает асинхронный парсинг (через очередь с воркерами)
+    и мгновенно отправляет новые находки.
     """
     if stop_event.is_set():
         logger.info("⏹️ Поиск отменён (stop_event установлен)")
         return []
     
-    logger.info(f"🚀 Запуск поиска для {len(keywords)} ключей на {len(platforms)} площадках (max_concurrent={max_concurrent})")
+    logger.info(f"🚀 Запуск поиска для {len(keywords)} ключей на {len(platforms)} площадках (воркеров={max_workers})")
     
     # Запускаем асинхронный парсинг в фоновом цикле через run_coro
-    items = run_coro(run_async_search(keywords, platforms, max_concurrent)).result()
+    # Теперь run_async_search принимает max_workers (количество воркеров)
+    items = run_coro(run_async_search(keywords, platforms, max_workers)).result()
     
     if not items:
         logger.info("📭 Товаров не найдено")
@@ -62,7 +64,7 @@ def run_search(keywords, platforms, chat_id=None, max_concurrent=5):  # ⚡ ум
                 )
                 # Отправляем асинхронно через пул потоков
                 send_executor.submit(send_async_message, send_func, message, item.get('img_url'))
-                # Небольшая задержка, чтобы не перегрузить executor (можно убрать, если не критично)
+                # Небольшая задержка, чтобы не перегрузить executor
                 time.sleep(0.05)
     
     with state_lock:

@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y \
     curl \
     ca-certificates \
     fonts-liberation \
-    libasound2 \
+    libasound2t64 \
     libatk-bridge2.0-0 \
     libatk1.0-0 \
     libcups2 \
@@ -38,14 +38,19 @@ RUN apt-get update && apt-get install -y \
     libxss1 \
     && rm -rf /var/lib/apt/lists/*
 
+# Копируем зависимости Python
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Установка Chromium
+# Устанавливаем Chromium через Playwright
 RUN python -m playwright install chromium
+RUN python -m playwright install-deps  # дополнительно установит зависимости
 
+# Копируем весь код
 COPY . .
 
+# Порт для Railway
 ENV PORT=8080
 
-CMD ["python", "main.py"]
+# Запускаем через gunicorn (более производительно, чем Flask dev server)
+CMD ["gunicorn", "-w", "4", "-b", "0.0.0.0:8080", "telegram_bot:app"]

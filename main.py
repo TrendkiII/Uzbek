@@ -9,7 +9,7 @@ from scheduler import run_scheduler
 from utils import init_proxy_pool
 from database import init_db
 from playwright_manager import init_browser, close_browser
-from async_loop import start_background_loop, run_coro
+from async_loop import start_background_loop, run_coro, stop_loop
 
 # ==================== Запуск планировщика ====================
 def start_scheduler():
@@ -53,6 +53,7 @@ def init_playwright_async():
     try:
         # Ждём завершения инициализации браузера
         run_coro(init_browser()).result(timeout=30)
+        logger.info("✅ Playwright browser initialized")
     except Exception as e:
         logger.error(f"❌ Failed to initialize Playwright browser: {e}")
 
@@ -61,6 +62,13 @@ def close_playwright_async():
         run_coro(close_browser()).result(timeout=10)
     except Exception as e:
         logger.error(f"❌ Error closing Playwright: {e}")
+
+# ==================== Очистка при выходе ====================
+def cleanup():
+    logger.info("🧹 Завершение работы...")
+    close_playwright_async()
+    stop_loop()
+    logger.info("✅ Cleanup completed")
 
 # ==================== Основной запуск ====================
 if __name__ == "__main__":
@@ -87,7 +95,9 @@ if __name__ == "__main__":
 
     # Инициализируем Playwright браузер в этом цикле
     init_playwright_async()
-    atexit.register(close_playwright_async)
+    
+    # Регистрируем очистку при выходе
+    atexit.register(cleanup)
 
     # Установка времени старта
     try:

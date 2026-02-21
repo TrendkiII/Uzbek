@@ -34,9 +34,9 @@ def check_all_marketplaces(chat_id=None):
             keywords.extend(expand_selected_brands_for_platforms([brand], [sample_platform])[sample_platform])
         keywords = list(set(keywords))[:20]  # тоже ограничим
     
-    # Запускаем поиск с уменьшенным max_concurrent (5 для обычного, 10 для турбо)
-    max_conc = 10 if turbo else 5
-    result = run_search(keywords, platforms, chat_id, max_concurrent=max_conc)
+    # Запускаем поиск с соответствующим количеством воркеров
+    max_workers = 10 if turbo else 5
+    result = run_search(keywords, platforms, chat_id, max_workers=max_workers)
     
     return result
 
@@ -50,7 +50,7 @@ def run_scheduler():
         with state_lock:
             turbo = BOT_STATE.get('turbo_mode', False)
             if turbo:
-                interval = 10 * 60  # 10 минут (увеличено с 5)
+                interval = 10 * 60  # 10 минут
             else:
                 interval = BOT_STATE['interval'] * 60
             paused = BOT_STATE['paused']
