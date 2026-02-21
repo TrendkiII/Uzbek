@@ -9,14 +9,13 @@ db_lock = Lock()
 
 # ==================== Инициализация базы данных ====================
 def init_db():
-    """Создаёт таблицу items, если её нет"""
+    """Создаёт таблицу items и обновляет старые таблицы"""
     with db_lock:
         conn = None
         try:
             conn = sqlite3.connect(DB_FILE)
             c = conn.cursor()
             
-            # Создаём таблицу для товаров
             c.execute('''CREATE TABLE IF NOT EXISTS items
                         (id TEXT PRIMARY KEY,
                          title TEXT,
@@ -30,21 +29,21 @@ def init_db():
                          last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                          is_active INTEGER DEFAULT 1)''')
             
-            # Создаём индекс для быстрого поиска по источнику и времени
-            c.execute('''CREATE INDEX IF NOT EXISTS idx_source_time 
-                         ON items(source, found_at)''')
+            # Попытка добавить новые колонки в старую БД
+            try:
+                c.execute("ALTER TABLE items ADD COLUMN last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+            except sqlite3.OperationalError:
+                pass # Колонка уже существует, всё в порядке
+
+            try:
+                c.execute("ALTER TABLE items ADD COLUMN brand_main TEXT")
+            except sqlite3.OperationalError:
+                pass 
             
-            # Создаём индекс для поиска по бренду
-            c.execute('''CREATE INDEX IF NOT EXISTS idx_brand 
-                         ON items(brand_main)''')
-            
-            # Создаём индекс для проверки активности
-            c.execute('''CREATE INDEX IF NOT EXISTS idx_active 
-                         ON items(is_active)''')
-            
-            # НОВЫЙ: составной индекс для ускорения статистики по брендам
-            c.execute('''CREATE INDEX IF NOT EXISTS idx_brand_active 
-                         ON items(brand_main, is_active)''')
+            c.execute('''CREATE INDEX IF NOT EXISTS idx_source_time ON items(source, found_at)''')
+            c.execute('''CREATE INDEX IF NOT EXISTS idx_brand ON items(brand_main)''')
+            c.execute('''CREATE INDEX IF NOT EXISTS idx_active ON items(is_active)''')
+            c.execute('''CREATE INDEX IF NOT EXISTS idx_brand_active ON items(brand_main, is_active)''')
             
             conn.commit()
             logger.info(f"✅ База данных SQLite инициализирована: {DB_FILE}")

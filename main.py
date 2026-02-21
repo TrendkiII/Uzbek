@@ -1,11 +1,15 @@
 import os
 import time
+import atexit
 from threading import Thread
-from config import BOT_STATE, logger, BOT_START_TIME, TELEGRAM_BOT_TOKEN
+
+from config import BOT_STATE, logger, TELEGRAM_BOT_TOKEN
 from telegram_bot import app as main_app
 from scheduler import run_scheduler
 from utils import init_proxy_pool
 from database import init_db
+from playwright_manager import init_browser, close_browser
+from async_loop import start_background_loop, run_coro
 
 # ==================== Запуск планировщика ====================
 def start_scheduler():
@@ -21,14 +25,12 @@ def setup_webhook():
         logger.error("❌ TELEGRAM_BOT_TOKEN не установлен!")
         return
 
-    # Получаем URL вебхука из переменных окружения или формируем автоматически
     webhook_url = os.environ.get("WEBHOOK_URL")
     if not webhook_url:
         railway_url = os.environ.get("RAILWAY_STATIC_URL")
         if railway_url:
             webhook_url = f"https://{railway_url}"
         else:
-            # Значение по умолчанию (можно задать через переменную DEFAULT_WEBHOOK_URL)
             webhook_url = os.environ.get("DEFAULT_WEBHOOK_URL", "https://uzbek-production.up.railway.app")
             logger.warning(f"⚠️ WEBHOOK_URL не задан, использую {webhook_url}")
 
@@ -45,6 +47,20 @@ def setup_webhook():
             logger.error(f"❌ HTTP ошибка при установке вебхука: {r.status_code}")
     except Exception as e:
         logger.error(f"❌ Ошибка при установке вебхука: {e}")
+
+# ==================== Инициализация Playwright через общий цикл ====================
+def init_playwright_async():
+    try:
+        # Ждём завершения инициализации браузера
+        run_coro(init_browser()).result(timeout=30)
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize Playwright browser: {e}")
+
+def close_playwright_async():
+    try:
+        run_coro(close_browser()).result(timeout=10)
+    except Exception as e:
+        logger.error(f"❌ Error closing Playwright: {e}")
 
 # ==================== Основной запуск ====================
 if __name__ == "__main__":
@@ -66,6 +82,13 @@ if __name__ == "__main__":
     except Exception as e:
         logger.error(f"❌ Ошибка инициализации прокси: {e}")
 
+    # Запускаем фоновый event loop
+    start_background_loop()
+
+    # Инициализируем Playwright браузер в этом цикле
+    init_playwright_async()
+    atexit.register(close_playwright_async)
+
     # Установка времени старта
     try:
         BOT_STATE['start_time'] = time.time()
@@ -75,10 +98,8 @@ if __name__ == "__main__":
     # Установка вебхука для основного бота
     setup_webhook()
 
-    # Запуск планировщика (основной бот)
+    # Запуск планировщика
     start_scheduler()
-
-    # 👇 ЭТУ СТРОКУ МЫ УДАЛИЛИ (start_deploy_bot больше не вызывается)
 
     # Получаем порт из окружения
     port = int(os.environ.get("PORT", 8080))
@@ -88,7 +109,6 @@ if __name__ == "__main__":
     logger.info(f"🌍 Healthcheck доступен по /health")
     logger.info("=" * 50)
 
-    # Небольшая задержка перед запуском Flask
     time.sleep(2)
 
     # Запуск основного Flask приложения

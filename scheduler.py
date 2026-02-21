@@ -1,15 +1,9 @@
 import time
 from threading import Thread
 
-from config import (
-    BOT_STATE, state_lock, logger,
-    stop_event, scheduler_busy, scheduler_lock
-)
-from brands import (
-    expand_selected_brands_for_platforms,
-    BRAND_GROUPS,
-)
-from scheduler_common import run_search  # вынесем run_search в отдельный модуль или оставим здесь, но для краткости оставим
+from config import BOT_STATE, state_lock, logger, stop_event, scheduler_busy, scheduler_lock
+from brands import expand_selected_brands_for_platforms, BRAND_GROUPS
+from scheduler_common import run_search
 
 def check_all_marketplaces(chat_id=None):
     with state_lock:

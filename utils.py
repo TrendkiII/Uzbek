@@ -4,6 +4,7 @@ import random
 import requests
 import logging
 import json
+import asyncio
 from urllib.parse import urljoin, quote
 from bs4 import BeautifulSoup
 from fake_useragent import UserAgent

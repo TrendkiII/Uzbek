@@ -12,7 +12,8 @@ from config import (
     logger, ALL_PLATFORMS, PROXY_POOL, stop_event
 )
 from brands import BRAND_MAIN_NAMES, get_variations_for_platform, BRAND_GROUPS, detect_brand_from_title
-from scheduler import run_search, check_all_marketplaces
+from scheduler_common import run_search
+from scheduler import check_all_marketplaces
 from utils import (
     test_proxy, add_proxy_to_pool, check_and_update_proxies,
     get_proxy_stats, mark_proxy_bad_str, test_proxy_async
@@ -506,7 +507,7 @@ def handle_callback_start_super_turbo(callback, chat_id):
         send_telegram_message("⚠️ Нет ключевых слов для поиска", chat_id=chat_id)
         return
     send_telegram_message(f"⚡ Запускаю супер-турбо поиск по {len(keywords)} ключам...", chat_id=chat_id)
-    Thread(target=run_search, args=(keywords, platforms, chat_id, 30)).start()
+    Thread(target=run_search, args=(keywords, platforms, chat_id, 5)).start()
 
 def handle_callback_stop_check(callback, chat_id):
     stop_event.set()
