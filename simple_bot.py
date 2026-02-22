@@ -57,8 +57,12 @@ bot = Bot(token=config.BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
+# Глобальные переменные
+db = None
+claude_cu = None
+
 # ============================================
-# ПРИНУДИТЕЛЬНОЕ УДАЛЕНИЕ ВЕБХУКА - ЭТО РЕШИТ ПРОБЛЕМУ!
+# ФУНКЦИЯ УДАЛЕНИЯ ВЕБХУКА
 # ============================================
 
 async def force_delete_webhook():
@@ -89,29 +93,29 @@ async def force_delete_webhook():
     except Exception as e:
         logger.error(f"❌ Ошибка при проверке/удалении вебхука: {e}")
 
-# ЗАПУСКАЕМ УДАЛЕНИЕ ВЕБХУКА (синхронно)
-try:
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(force_delete_webhook())
-except RuntimeError:
-    # Если цикл событий уже запущен
-    asyncio.create_task(force_delete_webhook())
-
 # ============================================
-# ИНИЦИАЛИЗАЦИЯ БАЗЫ ДАННЫХ И CLAUDE
+# ФУНКЦИЯ НАСТРОЙКИ БОТА
 # ============================================
 
-# Инициализация базы данных
-db = Database()
-
-# Инициализация Claude (если доступно)
-claude_cu = None
-if config.CLAUDE_ENABLED and CLAUDE_AVAILABLE:
-    try:
-        claude_cu = ClaudeComputerUse(api_url=config.CLAUDE_API_URL)
-        logger.info("✅ Claude Computer Use инициализирован")
-    except Exception as e:
-        logger.error(f"❌ Ошибка инициализации Claude: {e}")
+async def setup_bot():
+    """Настройка бота перед запуском"""
+    global db, claude_cu
+    
+    # Удаляем вебхук
+    await force_delete_webhook()
+    
+    # Инициализация базы данных
+    db = Database()
+    
+    # Инициализация Claude (если доступно)
+    if config.CLAUDE_ENABLED and CLAUDE_AVAILABLE:
+        try:
+            claude_cu = ClaudeComputerUse(api_url=config.CLAUDE_API_URL)
+            logger.info("✅ Claude Computer Use инициализирован")
+        except Exception as e:
+            logger.error(f"❌ Ошибка инициализации Claude: {e}")
+    
+    logger.info("✅ Настройка бота завершена")
 
 # ============================================
 # СОСТОЯНИЯ FSM
@@ -565,15 +569,21 @@ async def main():
     """Главная функция"""
     logger.info("🚀 Запуск simple_bot.py")
     logger.info(f"✅ Токен: {config.BOT_TOKEN[:10]}...")
+    
+    # Выполняем настройку перед запуском
+    await setup_bot()
+    
     logger.info(f"🤖 Claude: {'доступен' if claude_cu else 'отключен'}")
     
-    # Финальная проверка вебхука перед запуском
+    # Финальная проверка вебхука (просто для уверенности)
     try:
         webhook_info = await bot.get_webhook_info()
         if webhook_info.url:
             logger.warning(f"⚠️ ВЕБХУК ВСЕ ЕЩЕ ЕСТЬ: {webhook_info.url}")
             await bot.delete_webhook(drop_pending_updates=True)
             logger.info("✅ Вебхук удален перед стартом")
+        else:
+            logger.info("✅ Вебхуков нет, запускаем polling")
     except Exception as e:
         logger.warning(f"⚠️ Ошибка при финальной проверке: {e}")
     
