@@ -42,10 +42,6 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Устанавливаем Chromium через Playwright
-RUN python -m playwright install chromium
-RUN python -m playwright install-deps
-
 # Копируем весь код
 COPY . .
 
