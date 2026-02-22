@@ -27,7 +27,7 @@ from utils import logger
 from utils import logger, format_number
 
 # Импорт модуля Computer Use
-from claude_controller import ClaudeComputerUse, ComputerUseTask
+
 
 # Настройка логирования
 logging.basicConfig(
@@ -84,7 +84,7 @@ class ParserStates(StatesGroup):
 # ============================================
 
 config = BotConfig()
-bot = Bot(token=config.BOT_TOKEN)
+bot = Bot(token=config.TELEGRAM_BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
