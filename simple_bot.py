@@ -40,7 +40,7 @@ except ImportError as e:
 # Загружаем конфиг
 config = Config()
 
-# Проверяем токен! (САМОЕ ВАЖНОЕ)
+# Проверяем токен!
 if not config.BOT_TOKEN:
     logger.critical("❌ КРИТИЧЕСКАЯ ОШИБКА: Токен бота не найден!")
     logger.critical("Проверь переменные окружения: BOT_TOKEN или TELEGRAM_BOT_TOKEN")
@@ -52,10 +52,54 @@ logger.info(f"✅ Токен бота: {config.BOT_TOKEN[:10]}...")
 # ИНИЦИАЛИЗАЦИЯ
 # ============================================
 
-# Создаем бота и диспетчер - ПРАВИЛЬНО! token, а не to_ken
-bot = Bot(token=config.BOT_TOKEN)  # <--- ВОТ ТАК ДОЛЖНО БЫТЬ!
+# Создаем бота и диспетчер
+bot = Bot(token=config.BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
+
+# ============================================
+# ПРИНУДИТЕЛЬНОЕ УДАЛЕНИЕ ВЕБХУКА - ЭТО РЕШИТ ПРОБЛЕМУ!
+# ============================================
+
+async def force_delete_webhook():
+    """Принудительно удаляет вебхук"""
+    try:
+        logger.info("🔍 Проверка наличия вебхука...")
+        webhook_info = await bot.get_webhook_info()
+        
+        if webhook_info.url:
+            logger.warning(f"⚠️ НАЙДЕН АКТИВНЫЙ ВЕБХУК: {webhook_info.url}")
+            logger.warning("🔄 Принудительно удаляю вебхук...")
+            
+            result = await bot.delete_webhook(drop_pending_updates=True)
+            if result:
+                logger.info("✅ Вебхук успешно удален!")
+            else:
+                logger.error("❌ Не удалось удалить вебхук")
+        else:
+            logger.info("✅ Вебхуков нет, можно использовать polling")
+            
+        # Проверяем еще раз для уверенности
+        webhook_info = await bot.get_webhook_info()
+        if not webhook_info.url:
+            logger.info("✅ Подтверждено: вебхуков нет")
+        else:
+            logger.error(f"❌ Вебхук все еще есть: {webhook_info.url}")
+            
+    except Exception as e:
+        logger.error(f"❌ Ошибка при проверке/удалении вебхука: {e}")
+
+# ЗАПУСКАЕМ УДАЛЕНИЕ ВЕБХУКА (синхронно)
+try:
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(force_delete_webhook())
+except RuntimeError:
+    # Если цикл событий уже запущен
+    asyncio.create_task(force_delete_webhook())
+
+# ============================================
+# ИНИЦИАЛИЗАЦИЯ БАЗЫ ДАННЫХ И CLAUDE
+# ============================================
 
 # Инициализация базы данных
 db = Database()
@@ -432,7 +476,9 @@ async def run_parser_task(chat_id: int, platform: str, query: str, status_msg_id
         if results:
             report += "**Товары:**\n"
             for i, item in enumerate(results[:3], 1):
-                report += f"{i}. {item.get('title', '?')[:50]} - {item.get('price', '?')}\n"
+                title = item.get('title', '?')
+                price = item.get('price', '?')
+                report += f"{i}. {title[:50]}... - {price}\n"
         
         keyboard = InlineKeyboardBuilder()
         keyboard.button(text="🔄 Новый поиск", callback_data="quick_search")
@@ -484,7 +530,8 @@ async def run_claude_task(chat_id: int, task: 'ComputerUseTask', status_msg_id: 
             if result.items:
                 report += "**Товары:**\n"
                 for i, item in enumerate(result.items[:3], 1):
-                    report += f"{i}. {item.get('title', '?')[:50]}\n"
+                    title = item.get('title', '?')
+                    report += f"{i}. {title[:50]}...\n"
             
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="🔄 Новая задача", callback_data="claude_start")
@@ -520,8 +567,18 @@ async def main():
     logger.info(f"✅ Токен: {config.BOT_TOKEN[:10]}...")
     logger.info(f"🤖 Claude: {'доступен' if claude_cu else 'отключен'}")
     
+    # Финальная проверка вебхука перед запуском
+    try:
+        webhook_info = await bot.get_webhook_info()
+        if webhook_info.url:
+            logger.warning(f"⚠️ ВЕБХУК ВСЕ ЕЩЕ ЕСТЬ: {webhook_info.url}")
+            await bot.delete_webhook(drop_pending_updates=True)
+            logger.info("✅ Вебхук удален перед стартом")
+    except Exception as e:
+        logger.warning(f"⚠️ Ошибка при финальной проверке: {e}")
+    
     # Запускаем polling
-    await dp.start_polling(bot)
+    await dp.start_polling(bot, drop_pending_updates=True)
 
 if __name__ == "__main__":
     asyncio.run(main())
