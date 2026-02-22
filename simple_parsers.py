@@ -1,8 +1,9 @@
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import quote
+import time  # ЭТА СТРОКА
 from config import ITEMS_PER_PAGE, logger
-from utils import generate_item_id, make_full_url, get_next_user_agent
+from utils import generate_item_id, make_full_url, get_next_user_agent, make_full_url, get_next_user_agent
 
 def parse_mercari(keyword):
     """Синхронный парсер Mercari"""
