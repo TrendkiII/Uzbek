@@ -1,0 +1,3 @@
+[submodule "sonnet-api"]
+	path = sonnet-api
+	url = https://github.com/AndresDevvv/free-sonnetapi.git
