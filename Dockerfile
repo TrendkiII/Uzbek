@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-# Установка Node.js и npm
+# Устанавливаем Node.js
 RUN apt-get update && apt-get install -y \
     curl \
     && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
@@ -8,19 +8,26 @@ RUN apt-get update && apt-get install -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+# Создаем рабочую директорию
 WORKDIR /app
 
-# Копируем зависимости Python
+# Копируем Python зависимости
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Копируем Node.js API
+COPY free-api/ ./free-api/
+WORKDIR /app/free-api
+RUN npm install
+
+# Возвращаемся в основную директорию
+WORKDIR /app
 
 # Копируем весь проект
 COPY . .
 
-# Установка Node.js зависимостей для free-api
-RUN if [ -d "free-api" ]; then \
-        cd free-api && npm install; \
-    fi
+# Railway дает порт через переменную PORT
+ENV PORT=8080
 
-# Запуск
+# Запускаем
 CMD ["python", "main.py"]
