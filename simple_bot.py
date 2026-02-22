@@ -22,7 +22,8 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from config import Config
 from database import Database
 from brands import get_all_brands, get_brand_categories
-from simple_parsers import run_parser
+from simple_parsers import parse_mercari, search_all
+from utils import logger
 from utils import logger, format_number
 
 # Импорт модуля Computer Use
@@ -602,16 +603,20 @@ async def process_price_max(message: Message, state: FSMContext):
 async def run_parser_task(chat_id: int, platform: str, query: str, status_msg_id: int, price_min: int = 0, price_max: int = 1000000):
     """Запуск обычного парсера в фоне"""
     try:
-        # Здесь твоя логика парсинга из simple_parsers.py
-        from simple_parsers import parse_platform
+        # Используем существующие функции вместо run_parser
+        from simple_parsers import parse_mercari, search_all
         
-        results = await parse_platform(
-            platform=platform,
-            query=query,
-            price_min=price_min,
-            price_max=price_max,
-            max_items=config.DEFAULT_MAX_ITEMS
-        )
+        # Для Mercari используем parse_mercari
+        if platform == "mercari" or platform == "Mercari JP":
+            # Запускаем в отдельном потоке, т.к. parse_mercari синхронный
+            loop = asyncio.get_event_loop()
+            results = await loop.run_in_executor(None, parse_mercari, query)
+        else:
+            # Для нескольких ключей используем search_all
+            results = await loop.run_in_executor(None, search_all, [query])
+        
+        # Ограничиваем количество
+        results = results[:config.DEFAULT_MAX_ITEMS]
         
         # Сохраняем в БД
         saved_count = await db.save_items(results, platform, query)
@@ -620,7 +625,7 @@ async def run_parser_task(chat_id: int, platform: str, query: str, status_msg_id
         report = (
             f"✅ **Парсинг завершен!**\n\n"
             f"📊 **Результаты:**\n"
-            f"• Платформа: {config.PLATFORMS[platform]['name']}\n"
+            f"• Платформа: Mercari JP\n"
             f"• Запрос: {query}\n"
             f"• Найдено: {len(results)}\n"
             f"• Сохранено: {saved_count}\n\n"
@@ -630,7 +635,7 @@ async def run_parser_task(chat_id: int, platform: str, query: str, status_msg_id
             # Показываем первые 3 результата
             report += "**Топ товаров:**\n"
             for i, item in enumerate(results[:3], 1):
-                report += f"{i}. {item['title'][:50]}... - {item['price']} {item.get('currency', '')}\n"
+                report += f"{i}. {item['title'][:50]}... - {item['price']}\n"
         
         await bot.edit_message_text(
             report,
