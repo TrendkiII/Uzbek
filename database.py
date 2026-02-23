@@ -12,11 +12,11 @@ from datetime import datetime, timedelta
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-# ==================== Конфигурация ====================
+# ==================== КОНФИГУРАЦИЯ ====================
 DB_FILE = "items.db"
 db_lock = Lock()
 
-# ==================== Инициализация базы данных ====================
+# ==================== ИНИЦИАЛИЗАЦИЯ БАЗЫ ====================
 def init_db():
     """Создаёт таблицу items и обновляет старые таблицы"""
     with db_lock:
@@ -25,19 +25,38 @@ def init_db():
             conn = sqlite3.connect(DB_FILE)
             c = conn.cursor()
             
-            # Основная таблица товаров
-            c.execute('''CREATE TABLE IF NOT EXISTS items
-                        (id TEXT PRIMARY KEY,
-                         title TEXT,
-                         price TEXT,
-                         url TEXT,
-                         img_url TEXT,
-                         source TEXT,
-                         brand_main TEXT,
-                         found_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                         last_checked TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                         last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                         is_active INTEGER DEFAULT 1)''')
+            # Проверяем существующие колонки
+            c.execute("PRAGMA table_info(items)")
+            columns = [col[1] for col in c.fetchall()]
+            
+            # Если таблицы нет - создаем новую
+            if not columns:
+                c.execute('''CREATE TABLE items
+                            (id TEXT PRIMARY KEY,
+                             title TEXT,
+                             price TEXT,
+                             url TEXT,
+                             img_url TEXT,
+                             source TEXT,
+                             brand_main TEXT,
+                             found_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                             last_checked TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                             last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                             is_active INTEGER DEFAULT 1)''')
+                logger.info("✅ Таблица items создана")
+            else:
+                # Добавляем недостающие колонки
+                if 'last_seen' not in columns:
+                    c.execute("ALTER TABLE items ADD COLUMN last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+                    logger.info("✅ Добавлена колонка last_seen")
+                
+                if 'last_checked' not in columns:
+                    c.execute("ALTER TABLE items ADD COLUMN last_checked TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+                    logger.info("✅ Добавлена колонка last_checked")
+                
+                if 'is_active' not in columns:
+                    c.execute("ALTER TABLE items ADD COLUMN is_active INTEGER DEFAULT 1")
+                    logger.info("✅ Добавлена колонка is_active")
             
             # Таблица пользователей
             c.execute('''CREATE TABLE IF NOT EXISTS users
@@ -57,13 +76,13 @@ def init_db():
                          items_found INTEGER DEFAULT 0,
                          error TEXT)''')
             
-            # Индексы для ускорения
+            # Индексы
             c.execute('''CREATE INDEX IF NOT EXISTS idx_source_time ON items(source, found_at)''')
             c.execute('''CREATE INDEX IF NOT EXISTS idx_brand ON items(brand_main)''')
             c.execute('''CREATE INDEX IF NOT EXISTS idx_active ON items(is_active)''')
             
             conn.commit()
-            logger.info(f"✅ База данных SQLite инициализирована: {DB_FILE}")
+            logger.info(f"✅ База данных SQLite обновлена: {DB_FILE}")
         except Exception as e:
             logger.error(f"❌ Ошибка инициализации БД: {e}")
         finally:
@@ -101,7 +120,6 @@ class Database:
     
     async def save_items(self, items, platform, query):
         """Сохранение товаров"""
-        from database import add_item_with_brand
         count = 0
         for item in items:
             brand = item.get('brand', 'Unknown')
@@ -152,7 +170,7 @@ class Database:
         """Сохранение результатов Claude"""
         return len(items)
 
-# ==================== Работа с товарами ====================
+# ==================== РАБОТА С ТОВАРАМИ ====================
 def add_item_with_brand(item, brand_main):
     """
     Добавляет товар в базу с указанием основного бренда.
@@ -163,10 +181,12 @@ def add_item_with_brand(item, brand_main):
             conn = sqlite3.connect(DB_FILE)
             c = conn.cursor()
             
-            c.execute("SELECT is_active FROM items WHERE id = ?", (item['id'],))
+            # Проверяем существование товара
+            c.execute("SELECT id, is_active FROM items WHERE id = ?", (item['id'],))
             existing = c.fetchone()
             
             if existing:
+                # Обновляем существующий товар
                 c.execute('''UPDATE items 
                             SET last_checked = CURRENT_TIMESTAMP,
                                 last_seen = CURRENT_TIMESTAMP,
@@ -174,24 +194,34 @@ def add_item_with_brand(item, brand_main):
                                 price = ?,
                                 title = ?
                             WHERE id = ?''',
-                         (item['price'][:100], item['title'][:500], item['id']))
+                         (item.get('price', '')[:100], 
+                          item.get('title', '')[:500], 
+                          item['id']))
                 conn.commit()
                 return False
             else:
+                # Вставляем новый товар
                 c.execute('''INSERT INTO items 
                             (id, title, price, url, img_url, source, brand_main, 
                              found_at, last_checked, last_seen, is_active)
                             VALUES (?, ?, ?, ?, ?, ?, ?, 
                                     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1)''',
                          (item['id'], 
-                          item['title'][:500],
-                          item['price'][:100],
-                          item['url'][:1000],
+                          item.get('title', '')[:500],
+                          item.get('price', '')[:100],
+                          item.get('url', '')[:1000],
                           item.get('img_url', '')[:500],
-                          item['source'],
+                          item.get('source', 'Unknown'),
                           brand_main))
                 conn.commit()
                 return True
+                
+        except sqlite3.OperationalError as e:
+            if "no such column" in str(e):
+                logger.error(f"❌ Ошибка структуры БД: {e}. Запусти init_db() для обновления")
+            else:
+                logger.error(f"❌ Ошибка БД: {e}")
+            return False
         except Exception as e:
             logger.error(f"❌ Ошибка добавления товара {item.get('id')}: {e}")
             return False
@@ -258,6 +288,3 @@ def get_stats():
         finally:
             if conn:
                 conn.close()
-                # В конце database.py добавить:
-
-__all__ = ['init_db', 'Database', 'add_item_with_brand', 'get_items_by_brand_main', 'get_stats']

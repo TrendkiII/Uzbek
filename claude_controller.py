@@ -1,14 +1,12 @@
 """
-claude_controller.py - Модифицированная версия для работы с local free-sonnetapi
+claude_controller.py - Клиент для Claude Computer Use
 """
 
-import os
 import asyncio
-import json
 import aiohttp
+import json
 import uuid
 import time
-from datetime import datetime
 from typing import List, Dict, Optional, Any
 from dataclasses import dataclass, asdict
 
@@ -17,8 +15,8 @@ class ComputerUseTask:
     """Задача для Computer Use"""
     query: str
     user_id: int
-    platforms: Dict = None
-    platform: str = None
+    platform: Optional[str] = None
+    platforms: Optional[Dict] = None
     max_items: int = 50
     price_min: int = 0
     price_max: int = 1000000
@@ -40,42 +38,23 @@ class ComputerUseResult:
     task_id: str = None
 
 class ClaudeComputerUse:
-    """Клиент для Claude Computer Use через локальный free-sonnetapi"""
+    """Клиент для Claude Computer Use"""
     
     def __init__(self, api_url: str = "http://localhost:3032"):
-        """
-        Инициализация клиента Computer Use
-        """
         self.api_url = api_url
         self.session = None
-        print(f"✅ Claude Computer Use инициализирован (локальный API: {api_url})")
+        print(f"✅ Claude Computer Use инициализирован (API: {api_url})")
     
     async def _get_session(self):
-        if not self.session or self.session.closed:
+        if not self.session:
             self.session = aiohttp.ClientSession()
         return self.session
     
-    async def _check_api_health(self) -> bool:
-        """Проверка доступности API"""
-        try:
-            session = await self._get_session()
-            async with session.get(f"{self.api_url}/health", timeout=5) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    print(f"✅ API Health: Puter={data.get('puter_token', '?')}, Duck={data.get('duck_vqd', '?')}")
-                    return True
-                return False
-        except:
-            return False
-    
     async def run_task(self, task: ComputerUseTask) -> ComputerUseResult:
+        """Запуск задачи"""
         start_time = time.time()
         
         try:
-            # Проверяем здоровье API
-            if not await self._check_api_health():
-                print("⚠️ API health check failed, но пробуем отправить запрос...")
-            
             prompt = self._build_prompt(task)
             
             messages = [
@@ -89,35 +68,30 @@ class ClaudeComputerUse:
                 }
             ]
             
-            # Выбираем модель
-            model = "claude3.7" if task.platforms and len(task.platforms) > 1 else "claude3.5"
-            
             session = await self._get_session()
+            
             async with session.post(
                 f"{self.api_url}/v1/chat/completions",
                 json={
-                    "model": model,
+                    "model": "claude3.5",
                     "messages": messages,
                     "stream": False
                 },
-                timeout=180  # 3 минуты на ответ
+                timeout=120
             ) as response:
                 
                 if response.status != 200:
                     error_text = await response.text()
-                    raise Exception(f"API вернул {response.status}: {error_text[:200]}")
+                    raise Exception(f"API вернул {response.status}: {error_text}")
                 
                 data = await response.json()
                 
-                # Извлекаем контент из нового формата
-                content = ""
-                if 'choices' in data and len(data['choices']) > 0:
+                # Парсим ответ
+                content = data.get('content', '')
+                if not content and 'choices' in data:
                     content = data['choices'][0].get('message', {}).get('content', '')
-                else:
-                    content = data.get('content', '')
                 
                 items = self._parse_response(content)
-                usage = data.get('usage', {})
                 
                 duration = time.time() - start_time
                 
@@ -125,18 +99,11 @@ class ClaudeComputerUse:
                     success=True,
                     items=items,
                     duration=duration,
-                    tokens=usage.get('total_tokens', 0),
+                    tokens=0,
                     screenshots=[],
                     task_id=task.id
                 )
             
-        except asyncio.TimeoutError:
-            return ComputerUseResult(
-                success=False,
-                items=[],
-                error="Timeout: API не ответил за 180 секунд",
-                task_id=task.id
-            )
         except Exception as e:
             print(f"❌ Ошибка Computer Use: {e}")
             return ComputerUseResult(
@@ -162,7 +129,7 @@ class ClaudeComputerUse:
 {platform_info}
 
 ИНСТРУКЦИИ:
-1. Открой сайт в браузере (эмулируй действия человека)
+1. Открой сайт в браузере
 2. Найди товары по запросу
 3. Для каждого товара собери:
    - Название
@@ -176,8 +143,6 @@ class ClaudeComputerUse:
 5. Собери минимум {task.max_items} товаров
 6. Верни результат строго в формате JSON-массива:
    [{{"title": "...", "price": "...", "url": "...", "image": "...", "location": "...", "condition": "..."}}]
-
-Важно: Ответ должен содержать ТОЛЬКО JSON массив, без лишнего текста.
 """
         return prompt
     
@@ -185,7 +150,6 @@ class ClaudeComputerUse:
         items = []
         try:
             import re
-            # Ищем JSON массив
             json_match = re.search(r'\[\s*\{.*\}\s*\]', content, re.DOTALL)
             
             if json_match:
@@ -193,7 +157,6 @@ class ClaudeComputerUse:
                 if isinstance(data, list):
                     items = data
             else:
-                # Пробуем распарсить весь ответ
                 try:
                     data = json.loads(content)
                     if isinstance(data, list):
@@ -201,48 +164,39 @@ class ClaudeComputerUse:
                     elif isinstance(data, dict) and 'items' in data:
                         items = data['items']
                 except:
-                    # Если не JSON, пытаемся извлечь из текста
                     items = self._extract_items_from_text(content)
         except Exception as e:
             print(f"Ошибка парсинга ответа: {e}")
-        
         return items
     
     def _extract_items_from_text(self, text: str) -> List[Dict]:
         items = []
         import re
-        
-        # Паттерны для поиска
         price_pattern = r'(\d+[\.,]?\d*)\s*(?:₽|\$|€|zł|грн|руб|usd|eur|pln|uah)'
-        url_pattern = r'https?://[^\s<>"]+|www\.[^\s<>"]+'
         
         lines = text.split('\n')
         current_item = {}
         
         for line in lines:
             line = line.strip()
-            if not line or len(line) < 5:
+            if not line:
                 continue
             
             price_match = re.search(price_pattern, line, re.IGNORECASE)
-            url_match = re.search(url_pattern, line)
             
-            # Если нашли цену и это похоже на товар
             if price_match and len(line) > 10:
-                if current_item and 'title' in current_item:
+                if current_item:
                     items.append(current_item)
                 
                 current_item = {
-                    'title': line[:150],
+                    'title': line[:100],
                     'price': price_match.group(1),
-                    'currency': self._detect_currency(line),
-                    'url': url_match.group(0) if url_match else '',
-                    'condition': 'unknown'
+                    'currency': self._detect_currency(line)
                 }
             elif current_item and 'description' not in current_item:
                 current_item['description'] = line[:200]
         
-        if current_item and 'title' in current_item:
+        if current_item:
             items.append(current_item)
         
         return items

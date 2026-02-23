@@ -1,8 +1,13 @@
+"""
+simple_parsers.py - Парсеры для маркетплейсов
+"""
+
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import quote
 import time
 import random
+import asyncio
 from config import ITEMS_PER_PAGE, logger
 from utils import generate_item_id, make_full_url, get_next_user_agent
 
@@ -87,17 +92,22 @@ def parse_mercari(keyword):
                     price_elem = link.find(text=lambda t: t and ('¥' in t or '円' in t))
                     price = price_elem.strip() if price_elem else 'Цена не указана'
                     
+                    # Ищем фото
+                    img_elem = link.select_one('img')
+                    img_url = img_elem.get('src') if img_elem else ''
+                    
                     items.append({
                         'id': generate_item_id({'source': 'Mercari JP', 'url': full_url, 'title': title}),
-                        'title': title[:100],
-                        'price': price[:50],
+                        'title': title[:200],
+                        'price': price[:100],
                         'url': full_url,
                         'source': 'Mercari JP',
-                        'img_url': '',
+                        'img_url': img_url,
                     })
                 except Exception as e:
                     logger.debug(f"Ошибка парсинга ссылки: {e}")
             
+            logger.info(f"📦 Извлечено товаров из ссылок: {len(items)}")
             return items
         
         # Парсим карточки
@@ -178,8 +188,6 @@ async def run_parser(platform, query, price_min=0, price_max=1000000, max_items=
     """
     Асинхронная функция для запуска парсера
     """
-    import asyncio
-    
     logger.info(f"🚀 Запуск парсера для {platform}, запрос: {query}")
     
     # Для Mercari

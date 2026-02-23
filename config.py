@@ -61,7 +61,7 @@ class Config:
         },
     }
 
-# Для обратной совместимости - все переменные доступны и так
+# Для обратной совместимости
 BOT_STATE = {
     "selected_brands": [],
     "selected_platforms": ['Mercari JP'],
