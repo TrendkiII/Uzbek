@@ -11,16 +11,16 @@ app.use(cors());
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// Логирование всех запросов (для отладки)
+// Логирование всех запросов
 app.use((req, res, next) => {
   console.log(`📨 ${req.method} ${req.path}`);
   next();
 });
 
-// МОНТИРУЕМ РОУТЕР НА КОРЕНЬ
+// МОНТИРУЕМ РОУТЕР НА КОРЕНЬ - ЭТО ВАЖНО!
 app.use('/', chatRoute);
 
-// Дополнительные роуты для совместимости
+// Дополнительные роуты
 app.get('/health', (req, res) => {
   res.json({ status: 'alive', timestamp: new Date().toISOString() });
 });

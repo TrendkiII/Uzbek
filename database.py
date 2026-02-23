@@ -45,18 +45,25 @@ def init_db():
                              is_active INTEGER DEFAULT 1)''')
                 logger.info("✅ Таблица items создана")
             else:
-                # Добавляем недостающие колонки
+                # Сохраняем старые колонки для проверки
+                old_columns = columns.copy()
+                
+                # Добавляем недостающие колонки - БЕЗ DEFAULT!
                 if 'last_seen' not in columns:
-                    c.execute("ALTER TABLE items ADD COLUMN last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+                    c.execute("ALTER TABLE items ADD COLUMN last_seen TIMESTAMP")
                     logger.info("✅ Добавлена колонка last_seen")
+                    # Обновляем существующие записи
+                    c.execute("UPDATE items SET last_seen = found_at WHERE last_seen IS NULL")
                 
                 if 'last_checked' not in columns:
-                    c.execute("ALTER TABLE items ADD COLUMN last_checked TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+                    c.execute("ALTER TABLE items ADD COLUMN last_checked TIMESTAMP")
                     logger.info("✅ Добавлена колонка last_checked")
+                    c.execute("UPDATE items SET last_checked = found_at WHERE last_checked IS NULL")
                 
                 if 'is_active' not in columns:
                     c.execute("ALTER TABLE items ADD COLUMN is_active INTEGER DEFAULT 1")
                     logger.info("✅ Добавлена колонка is_active")
+                    c.execute("UPDATE items SET is_active = 1 WHERE is_active IS NULL")
             
             # Таблица пользователей
             c.execute('''CREATE TABLE IF NOT EXISTS users
