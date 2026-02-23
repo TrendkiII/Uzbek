@@ -2,152 +2,264 @@ const express = require('express');
 const axios = require('axios');
 const router = express.Router();
 
-let puterJwtToken = null;
-let duckVqd = null;
+// ============================================
+// КОНФИГУРАЦИЯ
+// ============================================
 
-async function generateJwtToken() {
+let puterToken = null;
+let duckVqd = null;
+let duckExpiry = null;
+
+// ============================================
+// PUTER - ПОЛУЧЕНИЕ ТОКЕНА
+// ============================================
+
+async function getPuterToken() {
   try {
-    console.log('🔄 Generating JWT token...');
+    console.log('🔄 Получаем Puter токен...');
     
-    // Новый способ для Puter (2026)
     const response = await axios({
       method: 'post',
       url: 'https://api.puter.com/auth/token',
       headers: {
         'Content-Type': 'application/json',
-        'Origin': 'https://puter.com',
-        'Referer': 'https://puter.com/',
-        'User-Agent': 'Mozilla/5.0'
+        'Origin': 'https://puter.com'
       },
       data: {
-        "grant_type": "guest"
-      }
+        grant_type: 'guest'
+      },
+      timeout: 10000
     });
     
-    if (response.data && response.data.access_token) {
-      puterJwtToken = response.data.access_token;
-      console.log('✅ JWT token generated');
-      return true;
+    if (response.data?.access_token) {
+      console.log('✅ Puter токен получен');
+      return response.data.access_token;
     }
     
-    // Запасной вариант
-    const backupResponse = await axios({
-      method: 'post',
-      url: 'https://puter.com/api/auth/guest',
-      headers: {
-        'Content-Type': 'application/json',
-      }
-    });
-    
-    if (backupResponse.data && backupResponse.data.token) {
-      puterJwtToken = backupResponse.data.token;
-      console.log('✅ JWT token generated (backup)');
-      return true;
-    }
-    
-    throw new Error('No token received');
-    
+    return null;
   } catch (error) {
-    console.error('❌ JWT error:', error.message);
-    return false;
+    console.log('⚠️ Puter token error:', error.message);
+    return null;
   }
 }
 
-async function initDuckVqd() {
+// ============================================
+// DUCKDUCKGO - ПОЛУЧЕНИЕ VQD
+// ============================================
+
+async function getDuckVqd() {
   try {
+    console.log('🔄 Получаем DuckDuckGo VQD...');
+    
     const response = await axios({
       method: 'get',
       url: 'https://duckduckgo.com/duckchat/v1/status',
       headers: {
         'x-vqd-accept': '1',
-        'User-Agent': 'Mozilla/5.0'
-      }
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      },
+      timeout: 10000
+    });
+    
+    const vqd = response.headers['x-vqd-4'];
+    if (vqd) {
+      console.log('✅ DuckDuckGo VQD получен');
+      return vqd;
+    }
+    return null;
+  } catch (error) {
+    console.log('⚠️ Duck VQD error:', error.message);
+    return null;
+  }
+}
+
+// ============================================
+// PUTER - ЗАПРОС К CLAUDE
+// ============================================
+
+async function callPuter(messages, model = 'claude-3-5-sonnet') {
+  if (!puterToken) return null;
+  
+  try {
+    const response = await axios({
+      method: 'post',
+      url: 'https://api.puter.com/chat/completions',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${puterToken}`,
+        'Origin': 'https://puter.com'
+      },
+      data: {
+        model: model,
+        messages: messages,
+        stream: false
+      },
+      timeout: 60000
+    });
+    
+    return {
+      content: response.data?.choices[0]?.message?.content || '',
+      usage: response.data?.usage || { total_tokens: 0 }
+    };
+  } catch (error) {
+    console.log('⚠️ Puter API error:', error.message);
+    if (error.response?.status === 401) {
+      puterToken = null;
+    }
+    return null;
+  }
+}
+
+// ============================================
+// DUCKDUCKGO - ЗАПРОС К CLAUDE HAIKU
+// ============================================
+
+async function callDuck(messages, retryCount = 0) {
+  if (!duckVqd) return null;
+  
+  try {
+    const response = await axios({
+      method: 'post',
+      url: 'https://duckduckgo.com/duckchat/v1/chat',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-vqd-4': duckVqd,
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      },
+      data: {
+        model: 'claude-3-haiku-20240307',
+        messages: messages
+      },
+      timeout: 30000
     });
     
     if (response.headers['x-vqd-4']) {
       duckVqd = response.headers['x-vqd-4'];
-      console.log('✅ DuckDuckGo VQD initialized');
     }
+    
+    return {
+      content: response.data?.message || '',
+      usage: { total_tokens: 0 }
+    };
   } catch (error) {
-    console.error('❌ VQD error:', error.message);
+    console.log('⚠️ Duck API error:', error.message);
+    
+    if (error.response?.status === 401 && retryCount < 2) {
+      console.log('🔄 VQD протух, обновляем...');
+      duckVqd = await getDuckVqd();
+      if (duckVqd) {
+        return callDuck(messages, retryCount + 1);
+      }
+    }
+    return null;
   }
 }
 
+// ============================================
+// ОБНОВЛЕНИЕ ТОКЕНОВ
+// ============================================
+
+setInterval(async () => {
+  puterToken = await getPuterToken();
+}, 30 * 60 * 1000);
+
+setInterval(async () => {
+  duckVqd = await getDuckVqd();
+  if (duckVqd) duckExpiry = Date.now() + 20 * 60 * 1000;
+}, 5 * 60 * 1000);
+
 // Инициализация
 (async () => {
-  await generateJwtToken();
-  await initDuckVqd();
+  puterToken = await getPuterToken();
+  duckVqd = await getDuckVqd();
+  if (duckVqd) duckExpiry = Date.now() + 20 * 60 * 1000;
 })();
 
-// Обновление каждые 6 часов
-setInterval(generateJwtToken, 6 * 60 * 60 * 1000);
-setInterval(initDuckVqd, 6 * 60 * 60 * 1000);
+// ============================================
+// ОСНОВНОЙ ЭНДПОИНТ
+// ============================================
 
 router.post('/v1/chat/completions', async (req, res) => {
+  const startTime = Date.now();
+  
   try {
     const { model = 'claude3.5', messages = [] } = req.body;
     
+    console.log(`\n📨 [${new Date().toISOString()}] ЗАПРОС:`);
+    
     if (!messages.length) {
-      return res.status(400).json({ error: 'No messages' });
+      return res.status(400).json({ error: 'No messages provided' });
     }
     
-    // Пробуем Puter
-    if (!puterJwtToken) {
-      await generateJwtToken();
+    // Пробуем провайдеров
+    let result = null;
+    let provider = null;
+    
+    // 1. Puter
+    console.log('🔄 Пробуем Puter...');
+    let puterModel = model === 'claude3.7' ? 'claude-3-7-sonnet' : 'claude-3-5-sonnet';
+    result = await callPuter(messages, puterModel);
+    provider = 'puter';
+    
+    // 2. Если Puter не сработал - DuckDuckGo
+    if (!result?.content) {
+      console.log('⚠️ Puter не ответил, пробуем DuckDuckGo...');
+      result = await callDuck(messages);
+      provider = 'duckai';
     }
     
-    if (puterJwtToken) {
-      try {
-        const puterRes = await axios({
-          method: 'post',
-          url: 'https://api.puter.com/ai/chat',
-          headers: {
-            'Authorization': `Bearer ${puterJwtToken}`,
-            'Content-Type': 'application/json'
+    const duration = Date.now() - startTime;
+    
+    if (result?.content) {
+      console.log(`✅ УСПЕХ (${provider}) за ${duration}ms`);
+      
+      return res.json({
+        id: `chatcmpl-${Date.now()}`,
+        object: 'chat.completion',
+        created: Math.floor(Date.now() / 1000),
+        model: model,
+        choices: [{
+          index: 0,
+          message: {
+            role: 'assistant',
+            content: result.content
           },
-          data: {
-            messages: messages,
-            model: model === 'claude3.7' ? 'claude-3-7-sonnet' : 'claude-3-5-sonnet'
+          finish_reason: 'stop'
+        }],
+        usage: result.usage || { total_tokens: 0 },
+        provider: provider
+      });
+    } else {
+      console.log(`❌ Все провайдеры недоступны за ${duration}ms`);
+      
+      return res.status(503).json({
+        error: 'All providers unavailable',
+        choices: [{
+          index: 0,
+          message: {
+            role: 'assistant',
+            content: 'Извините, Claude временно недоступен. Используйте обычный поиск.'
           },
-          timeout: 60000
-        });
-        
-        return res.json({
-          content: puterRes.data?.message?.content || puterRes.data?.choices?.[0]?.message?.content || '',
-          model: model
-        });
-      } catch (puterError) {
-        console.log('Puter error, trying DuckDuckGo...');
-      }
+          finish_reason: 'stop'
+        }]
+      });
     }
-    
-    // Если Puter не сработал, пробуем DuckDuckGo
-    if (!duckVqd) {
-      await initDuckVqd();
-    }
-    
-    const duckRes = await axios({
-      method: 'post',
-      url: 'https://duckduckgo.com/duckchat/v1/chat',
-      headers: {
-        'x-vqd-4': duckVqd,
-        'Content-Type': 'application/json'
-      },
-      data: {
-        model: 'claude-3-haiku',
-        messages: messages
-      }
-    });
-    
-    res.json({
-      content: duckRes.data?.message || '',
-      model: 'claude-3-haiku'
-    });
     
   } catch (error) {
-    console.error('❌ Error:', error.message);
+    console.error('❌ Ошибка:', error.message);
     res.status(500).json({ error: error.message });
   }
+});
+
+router.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    providers: {
+      puter: puterToken ? '✅' : '❌',
+      duckai: duckVqd ? '✅' : '❌'
+    },
+    timestamp: new Date().toISOString()
+  });
 });
 
 module.exports = router;
